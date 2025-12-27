@@ -1,0 +1,106 @@
+.topic-timeline {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.empty-state {
+  padding: 2rem;
+  text-align: center;
+  color: #999;
+  font-style: italic;
+}
+
+.timeline-container {
+  position: relative;
+  padding: 2rem 0;
+}
+
+.timeline-axis {
+  position: relative;
+  height: 40px;
+  border-bottom: 2px solid #e0e0e0;
+  margin-bottom: 1rem;
+}
+
+.axis-label {
+  position: absolute;
+  top: -20px;
+  left: 0;
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.axis-ticks {
+  position: relative;
+  height: 100%;
+}
+
+.tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  border-left: 1px solid #ccc;
+  height: 100%;
+}
+
+.tick-label {
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.75rem;
+  color: #666;
+  white-space: nowrap;
+}
+
+.timeline-bars {
+  position: relative;
+  min-height: 200px;
+}
+
+.topic-bar {
+  position: absolute;
+  height: 60px;
+  border-radius: 4px;
+  margin-bottom: 10px;
+  padding: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.topic-bar:hover {
+  transform: scale(1.02);
+  z-index: 10;
+}
+
+.topic-label {
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+
+.topic-keywords {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.keyword-tag {
+  background: rgba(255, 255, 255, 0.3);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.7rem;
+}
+
+
+
+
+
+
+

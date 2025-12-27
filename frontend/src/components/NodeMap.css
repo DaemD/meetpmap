@@ -1,0 +1,83 @@
+.node-map-container {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background: #fafafa;
+  position: relative;
+}
+
+.node-map-container .react-flow {
+  width: 100%;
+  height: 100%;
+}
+
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 2rem;
+  text-align: center;
+  color: #999;
+  font-style: italic;
+}
+
+.custom-node {
+  padding: 10px;
+  border-radius: 8px;
+  min-width: 150px;
+  max-width: 250px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  border: 2px solid;
+}
+
+.decision-node {
+  background: #e3f2fd;
+  border-color: #2196f3;
+}
+
+.action-node {
+  background: #f1f8e9;
+  border-color: #4caf50;
+}
+
+.idea-node {
+  background: #fff3e0;
+  border-color: #ff9800;
+}
+
+.proposal-node {
+  background: #fce4ec;
+  border-color: #e91e63;
+}
+
+.node-header {
+  font-size: 0.7rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  color: #666;
+}
+
+.node-content {
+  font-size: 0.9rem;
+  color: #333;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+.node-meta {
+  font-size: 0.7rem;
+  color: #999;
+  margin-top: 4px;
+}
+
+
+
+
+
+
+
