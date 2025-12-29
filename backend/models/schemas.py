@@ -26,8 +26,20 @@ class TopicData(BaseModel):
     topic_id: Optional[str] = None
 
 
+class GraphNode(BaseModel):
+    """Graph node representing a single idea in the semantic graph"""
+    id: str
+    embedding: List[float]  # Vector representation (core identity)
+    summary: str  # Short text description (for UI/debug)
+    parent_id: Optional[str] = None  # Primary parent node ID
+    children_ids: List[str] = []  # List of child node IDs
+    depth: int = 0  # Distance from root
+    last_updated: float  # Timestamp
+    metadata: dict = {}  # Additional data (chunk_id, timestamp, etc.)
+
+
 class NodeData(BaseModel):
-    """MeetMap node (idea/action/decision)"""
+    """Frontend-compatible node format (for visualization)"""
     id: str
     text: str
     type: str  # "decision", "action", "idea", "proposal"
@@ -36,6 +48,7 @@ class NodeData(BaseModel):
     topic_id: Optional[str] = None
     timestamp: float
     confidence: float = 1.0
+    idea_id: Optional[str] = None  # Groups related nodes (no versioning)
     metadata: dict = {}
 
 

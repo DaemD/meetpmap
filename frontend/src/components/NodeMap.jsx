@@ -48,12 +48,13 @@ function ActionNode({ data }) {
 }
 
 function IdeaNode({ data }) {
+  const isRoot = data.isRoot || false
   return (
-    <div className="custom-node idea-node">
+    <div className={`custom-node idea-node${isRoot ? ' root-node' : ''}`}>
       <Handle type="target" position={Position.Top} />
-      <div className="node-header">Idea</div>
+      <div className="node-header">{isRoot ? 'Root' : 'Idea'}</div>
       <div className="node-content">{data.label}</div>
-      {data.timestamp && (
+      {data.timestamp && !isRoot && (
         <div className="node-meta">{data.timestamp.toFixed(1)}s</div>
       )}
       <Handle type="source" position={Position.Bottom} />
@@ -80,25 +81,38 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
   
   const reactFlowEdges = useMemo(() => {
     console.log('NodeMap: Creating React Flow edges from', edgeData.length, 'edges')
+    console.log('NodeMap: Edge data:', edgeData)
+    
+    if (!edgeData || edgeData.length === 0) {
+      return []
+    }
+    
     const flowEdges = edgeData.map((edge) => {
       const source = edge.from_node || edge.source
       const target = edge.to_node || edge.target
+      
+      if (!source || !target) {
+        console.warn('Edge missing source or target:', edge)
+        return null
+      }
+      
       const flowEdge = {
         id: `edge-${source}-${target}`,
         source: source,
         target: target,
         type: 'smoothstep',
-        label: edge.type || 'chronological',
+        label: edge.type || 'semantic',
         style: {
           strokeWidth: 2 * (edge.strength || 1),
           opacity: 0.6,
           stroke: '#b1b1b7',
         },
-        animated: edge.type === 'chronological',
+        animated: false, // Semantic edges, not chronological
       }
-      console.log('Created edge:', flowEdge.id, flowEdge.source, '→', flowEdge.target)
+      console.log('Created edge:', flowEdge.id, flowEdge.source, '→', flowEdge.target, 'type:', flowEdge.label)
       return flowEdge
-    })
+    }).filter(e => e !== null) // Remove null edges
+    
     console.log('NodeMap: Total React Flow edges:', flowEdges.length)
     return flowEdges
   }, [edgeData])
@@ -119,11 +133,22 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
     // Only add nodes that don't exist yet
     nodeData.forEach(node => {
       if (!existingIds.has(node.id)) {
-        // Calculate position for new node
-        const existingCount = existingIds.size
-        const newPosition = {
-          x: (existingCount % 4) * 200 + 50,
-          y: Math.floor(existingCount / 4) * 150 + 50,
+        // Special positioning for root node
+        let newPosition
+        if (node.id === 'root' || node.metadata?.is_root) {
+          newPosition = { x: 400, y: 50 } // Center-top for root
+        } else {
+          // Calculate position for new node based on depth if available
+          const depth = node.metadata?.depth || 0
+          const existingCount = existingIds.size
+          const siblingsAtDepth = nodeData.filter(n => 
+            (n.metadata?.depth || 0) === depth && existingIds.has(n.id)
+          ).length
+          
+          newPosition = {
+            x: 400 + (siblingsAtDepth - depth * 2) * 250, // Spread horizontally by depth
+            y: 50 + depth * 150, // Stack vertically by depth
+          }
         }
         
         const flowNode = {
@@ -135,6 +160,7 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
             timestamp: node.timestamp,
             topic: node.topic,
             confidence: node.confidence,
+            isRoot: node.id === 'root' || node.metadata?.is_root,
           },
         }
         

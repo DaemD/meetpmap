@@ -1,9 +1,9 @@
 """
 MeetMap Prototype - Main FastAPI Application
-Simple pipeline: Receive chunk → Extract nodes → Send to frontend
+Simple pipeline: Receive chunk → Extract nodes → Return to frontend
 """
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -26,11 +26,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize service
+# Initialize services
 meetmap_service = MeetMapService()
-
-# Store active connections
-active_connections: list[WebSocket] = []
 
 
 @app.get("/")
@@ -43,59 +40,35 @@ async def health():
     return {"status": "healthy"}
 
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for real-time updates"""
-    await websocket.accept()
-    active_connections.append(websocket)
-    
+@app.post("/api/transcript")
+async def process_transcript_chunk(chunk: dict):
+    """Process a single transcript chunk and return nodes/edges"""
     try:
-        while True:
-            data = await websocket.receive_json()
-            
-            if data.get("type") == "transcript_chunk":
-                await process_chunk(data["data"], websocket)
-            else:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": f"Unknown message type: {data.get('type')}"
-                })
-                
-    except WebSocketDisconnect:
-        active_connections.remove(websocket)
-    except Exception as e:
-        print(f"WebSocket error: {e}")
-        if websocket in active_connections:
-            active_connections.remove(websocket)
-
-
-async def process_chunk(transcript_chunk: dict, websocket: WebSocket):
-    """
-    Simple pipeline: Extract nodes from chunk and send to frontend
-    """
-    try:
-        chunk = TranscriptChunk(**transcript_chunk)
+        transcript_chunk = TranscriptChunk(**chunk)
         
-        # Extract nodes
-        nodes = await meetmap_service.extract_nodes(chunk)
+        # Extract nodes and edges with full context
+        nodes, edges = await meetmap_service.extract_nodes(transcript_chunk)
         
-        # Send nodes to frontend
-        response = {
-            "type": "new_nodes",
-            "data": {
-                "nodes": [node.dict() for node in nodes]
-            }
+        print(f"✅ Extracted {len(nodes)} node(s) and {len(edges)} edge(s) from chunk")
+        
+        return {
+            "status": "success",
+            "nodes": [node.model_dump() for node in nodes],
+            "edges": [edge.model_dump() for edge in edges]
         }
-        
-        print(f"✅ Extracted {len(nodes)} node(s) from chunk")
-        await websocket.send_json(response)
         
     except Exception as e:
         print(f"❌ Error processing chunk: {e}")
-        await websocket.send_json({
-            "type": "error",
-            "message": str(e)
-        })
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
+
+
 
 
 if __name__ == "__main__":

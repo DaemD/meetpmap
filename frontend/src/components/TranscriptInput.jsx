@@ -1,7 +1,8 @@
 import { useState } from 'react'
+import { api } from '../services/api'
 import './TranscriptInput.css'
 
-export default function TranscriptInput({ onSubmit }) {
+export default function TranscriptInput({ onNodesReceived }) {
   const [text, setText] = useState('')
   const [startTime, setStartTime] = useState(0)
   const [endTime, setEndTime] = useState(5) // Default 5 seconds duration
@@ -31,14 +32,31 @@ export default function TranscriptInput({ onSubmit }) {
     }
 
     try {
-      onSubmit(chunk)
+      // Send to backend via HTTP
+      const response = await api.processTranscript(chunk)
+      
+      if (response.status === 'error') {
+        alert(`Error: ${response.message}`)
+        return
+      }
+      
+      console.log('✅ Processed chunk:', response.nodes.length, 'nodes,', response.edges.length, 'edges')
+      
+      // Pass nodes/edges to Dashboard
+      if (response.nodes.length > 0 && onNodesReceived) {
+        onNodesReceived({
+          nodes: response.nodes,
+          edges: response.edges
+        })
+      }
+      
       // Reset form
       setText('')
       setStartTime(endTime) // Next chunk starts where this one ended
       setEndTime(endTime + 5) // Default 5 second duration
     } catch (error) {
       console.error('Error submitting transcript:', error)
-      alert('Error submitting transcript. Please try again.')
+      alert(`Error submitting transcript: ${error.response?.data?.message || error.message}`)
     } finally {
       setIsSubmitting(false)
     }
@@ -97,7 +115,6 @@ export default function TranscriptInput({ onSubmit }) {
       <div className="input-hint">
         <p>💡 Tip: Enter transcript chunks as the conversation progresses. The system will:</p>
         <ul>
-          <li>Detect topics in real-time (TalkTraces)</li>
           <li>Extract ideas, actions, and decisions (MeetMap)</li>
           <li>Create visual connections between concepts</li>
         </ul>
@@ -105,4 +122,3 @@ export default function TranscriptInput({ onSubmit }) {
     </div>
   )
 }
-

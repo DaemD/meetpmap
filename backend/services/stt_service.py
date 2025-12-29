@@ -113,32 +113,93 @@ class STTService:
     async def transcribe_audio_file(self, audio_file_path: str) -> List[TranscriptChunk]:
         """
         Transcribe an audio file using OpenAI Whisper API
-        Useful for testing and batch processing
+        Returns list of TranscriptChunk objects with timestamps
         """
+        if not self.client:
+            print("❌ OpenAI client not initialized")
+            return []
+        
         try:
+            print(f"🎙️ Transcribing audio file: {audio_file_path}")
+            
             with open(audio_file_path, "rb") as audio_file:
                 transcript = self.client.audio.transcriptions.create(
                     model="whisper-1",
                     file=audio_file,
-                    response_format="verbose_json",
-                    timestamp_granularities=["segment"]
+                    response_format="verbose_json"
                 )
             
             chunks = []
-            for segment in transcript.segments:
-                chunk = TranscriptChunk(
-                    speaker=None,
-                    start=segment.get("start", 0.0),
-                    end=segment.get("end", 0.0),
-                    text=segment.get("text", ""),
-                    chunk_id=f"chunk_{segment.get('start', 0.0)}"
-                )
-                chunks.append(chunk)
+            
+            # Handle verbose_json response format
+            # The response should have either 'segments' or 'text' attribute
+            if hasattr(transcript, 'segments') and transcript.segments:
+                # API returns segments with timestamps
+                for segment in transcript.segments:
+                    # Handle both dict and object responses
+                    if isinstance(segment, dict):
+                        start = segment.get("start", 0.0)
+                        end = segment.get("end", 0.0)
+                        text = segment.get("text", "").strip()
+                    else:
+                        start = getattr(segment, 'start', 0.0)
+                        end = getattr(segment, 'end', 0.0)
+                        text = getattr(segment, 'text', '').strip()
+                    
+                    if text:  # Only add non-empty chunks
+                        chunk = TranscriptChunk(
+                            speaker=None,
+                            start=start,
+                            end=end,
+                            text=text,
+                            chunk_id=f"chunk_{start}_{end}"
+                        )
+                        chunks.append(chunk)
+                        print(f"  ✓ Segment: {chunk.start:.1f}s - {chunk.end:.1f}s: {chunk.text[:50]}...")
+            elif hasattr(transcript, 'text') and transcript.text:
+                # API returns single text (no timestamps) - split into chunks
+                text = transcript.text.strip()
+                if text:
+                    # Split by sentences and estimate timestamps
+                    sentences = [s.strip() for s in text.replace('. ', '.\n').split('\n') if s.strip()]
+                    current_time = 0.0
+                    
+                    for sentence in sentences:
+                        if not sentence:
+                            continue
+                        # Estimate duration (roughly 2-3 words per second)
+                        words = len(sentence.split())
+                        duration = max(1.0, words / 2.5)  # ~2.5 words per second
+                        
+                        chunk = TranscriptChunk(
+                            speaker=None,
+                            start=current_time,
+                            end=current_time + duration,
+                            text=sentence,
+                            chunk_id=f"chunk_{current_time}"
+                        )
+                        chunks.append(chunk)
+                        current_time += duration
+                        print(f"  ✓ Chunk: {chunk.start:.1f}s - {chunk.end:.1f}s: {chunk.text[:50]}...")
+            else:
+                print("⚠️ No transcript text or segments found in response")
+                print(f"   Response type: {type(transcript)}, attributes: {dir(transcript)}")
+            
+            print(f"✅ Transcribed {len(chunks)} segment(s)")
+            
+            # Clean up temp file
+            try:
+                os.remove(audio_file_path)
+                print(f"🗑️ Deleted temp file: {audio_file_path}")
+            except:
+                pass
             
             return chunks
             
         except Exception as e:
-            print(f"Error transcribing audio file: {e}")
+            print(f"❌ Error transcribing audio file: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def segment_transcript(self, full_transcript: str, segment_size: int = 3) -> List[str]:
