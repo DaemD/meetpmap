@@ -67,6 +67,148 @@ async def process_transcript_chunk(chunk: dict):
         )
 
 
+@app.get("/api/graph/path/down/{node_id}")
+async def get_downward_path(node_id: str):
+    """Get all paths from node down to its last children"""
+    try:
+        graph_manager = meetmap_service.graph_manager
+        result = graph_manager.get_downward_paths(node_id)
+        return {"status": "success", **result}
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
+@app.get("/api/graph/path/up/{node_id}")
+async def get_upward_path(node_id: str):
+    """Get path from node up to root"""
+    try:
+        graph_manager = meetmap_service.graph_manager
+        result = graph_manager.get_path_to_root(node_id)
+        return {"status": "success", **result}
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
+@app.get("/api/graph/maturity/{node_id}")
+async def get_maturity(node_id: str):
+    """Get maturity score for a node"""
+    try:
+        graph_manager = meetmap_service.graph_manager
+        result = graph_manager.calculate_maturity(node_id)
+        return {"status": "success", **result}
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
+@app.get("/api/graph/influence/{node_id}")
+async def get_influence(node_id: str):
+    """Get influence score for a node"""
+    try:
+        graph_manager = meetmap_service.graph_manager
+        result = graph_manager.calculate_influence(node_id)
+        return {"status": "success", **result}
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
+@app.get("/api/graph/state")
+async def get_graph_state():
+    """Get the complete graph state (all nodes and edges)"""
+    try:
+        graph_manager = meetmap_service.graph_manager
+        
+        # Get all nodes and convert to frontend format
+        all_graph_nodes = graph_manager.get_all_nodes()
+        
+        # Convert to frontend format using the service's conversion method
+        from models.schemas import NodeData, EdgeData
+        
+        nodes = []
+        edges = []
+        
+        # Include root node
+        root = graph_manager.get_root()
+        root_node_data = NodeData(
+            id=root.id,
+            text=root.summary,
+            type="idea",
+            timestamp=0.0,
+            confidence=1.0,
+            metadata={
+                "depth": 0,
+                "is_root": True,
+                **root.metadata
+            }
+        )
+        nodes.append(root_node_data)
+        
+        # Convert all other nodes
+        for graph_node in all_graph_nodes:
+            if graph_node.id == graph_manager.root_id:
+                continue  # Already added root
+            
+            cluster_id = graph_node.metadata.get("cluster_id")
+            cluster_color = graph_manager.get_cluster_color(cluster_id) if cluster_id is not None else None
+            
+            node_data = NodeData(
+                id=graph_node.id,
+                text=graph_node.summary,
+                type="idea",
+                speaker=graph_node.metadata.get("speaker"),
+                timestamp=graph_node.metadata.get("timestamp", 0.0),
+                confidence=1.0,
+                metadata={
+                    "depth": graph_node.depth,
+                    "parent_id": graph_node.parent_id,
+                    "children_count": len(graph_node.children_ids),
+                    "cluster_id": cluster_id,
+                    "cluster_color": cluster_color,
+                    **graph_node.metadata
+                }
+            )
+            nodes.append(node_data)
+            
+            # Create edge from parent to this node
+            if graph_node.parent_id:
+                edge = EdgeData(
+                    from_node=graph_node.parent_id,
+                    to_node=graph_node.id,
+                    type="extends" if graph_node.parent_id != graph_manager.root_id else "root",
+                    strength=1.0,
+                    metadata={
+                        "relationship": "parent_child"
+                    }
+                )
+                edges.append(edge)
+        
+        return {
+            "status": "success",
+            "nodes": [node.model_dump() for node in nodes],
+            "edges": [edge.model_dump() for edge in edges]
+        }
+        
+    except Exception as e:
+        print(f"❌ Error getting graph state: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
 
 
 

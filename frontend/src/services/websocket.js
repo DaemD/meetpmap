@@ -22,7 +22,7 @@ export class WebSocketService {
         const data = JSON.parse(event.data)
         const type = data.type || 'message'
         console.log(`📨 WebSocket message received: ${type}`, data)
-        
+
         // For new_nodes, pass the entire data object
         if (type === 'new_nodes') {
           const nodesData = data.data || data
@@ -45,7 +45,7 @@ export class WebSocketService {
     this.socket.onclose = (event) => {
       console.log(`🔌 Disconnected from WebSocket (code: ${event.code}, reason: ${event.reason || 'none'})`)
       this.emit('disconnect', {})
-      
+
       // Attempt to reconnect
       if (this.reconnectAttempts < this.maxReconnectAttempts) {
         this.reconnectAttempts++

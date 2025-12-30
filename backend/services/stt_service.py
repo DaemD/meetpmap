@@ -41,7 +41,7 @@ class STTService:
             
             # Placeholder: In production, this would:
             # 1. Connect to OpenAI Realtime API WebSocket
-            # 2. Stream audio chunks
+        # 2. Stream audio chunks
             # 3. Receive transcript.delta events
             # 4. Convert events to TranscriptChunk format
             
