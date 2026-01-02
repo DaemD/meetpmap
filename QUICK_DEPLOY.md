@@ -29,9 +29,13 @@ curl https://your-app.up.railway.app/health
 
 Every time you push to GitHub:
 ```bash
-git push origin main
+git push origin main  # or any branch you configured
 ```
 Railway automatically rebuilds and deploys in ~2-5 minutes.
+
+**Note**: By default, Railway deploys from `main` branch. To change this:
+- Go to **Settings** → **Service Settings** → **Branch**
+- Select your branch (or "All branches" for preview deployments)
 
 ---
 

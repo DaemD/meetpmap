@@ -129,7 +129,22 @@ Railway needs to know your backend is in a subdirectory:
 - Check **Deployments** tab for logs
 - Your API will be at: `https://your-app-name.up.railway.app`
 
-#### 8. Monitor Deployments
+#### 8. Configure Branch (Optional)
+
+**By default**, Railway deploys from `main` branch. To change this:
+
+1. Go to **Settings** → **Service Settings**
+2. Under **Source**, find **Branch**
+3. Select your branch (e.g., `develop`, `staging`, `production`)
+4. Or set to **"All branches"** to deploy from any branch
+
+**Branch Options**:
+- `main` - Production (default)
+- `develop` - Development/staging
+- `feature/*` - Feature branches (for testing)
+- `All branches` - Deploy from any branch push
+
+#### 9. Monitor Deployments
 
 - Railway shows build logs in real-time
 - First deployment takes ~5-10 minutes (downloading ML models)
@@ -380,7 +395,8 @@ Platforms set `PORT` automatically. If issues, check platform logs.
 1. Check GitHub webhook in platform dashboard
 2. Verify repository connection
 3. Check build logs for errors
-4. Ensure `main` branch is selected
+4. Verify the correct branch is selected (Settings → Branch)
+5. If using a different branch, make sure it's configured in platform settings
 
 ---
 
