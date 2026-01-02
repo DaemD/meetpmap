@@ -86,14 +86,10 @@
 }
 
 .custom-node.hovered {
-  transform: scale(1.1) !important;
+  transform: scale(1.05) !important;
   z-index: 10 !important;
 }
 
-.custom-node.clicked {
-  transform: scale(1.15) !important;
-  z-index: 10 !important;
-}
 
 /* Tooltip */
 .node-tooltip {
@@ -137,15 +133,31 @@
   color: #FFC107;
 }
 
-/* Path highlighting */
-.custom-node.in-downward-path {
-  border: 3px solid #4CAF50 !important;
-  background: #E8F5E9 !important;
+/* Recentre button */
+.recentre-button {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  padding: 10px 16px;
+  background: #2196f3;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: background 0.2s ease, transform 0.1s ease;
+  z-index: 1000;
 }
 
-.custom-node.in-upward-path {
-  border: 3px solid #FFC107 !important;
-  background: #FFF9C4 !important;
+.recentre-button:hover {
+  background: #1976d2;
+  transform: scale(1.05);
+}
+
+.recentre-button:active {
+  transform: scale(0.98);
 }
 
 /* Animations */

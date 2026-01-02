@@ -9,25 +9,48 @@ from fastapi.responses import JSONResponse
 import uvicorn
 from dotenv import load_dotenv
 import os
+import time
 
 from services.meetmap_service import MeetMapService
 from models.schemas import TranscriptChunk
 
 load_dotenv()
 
+app_start = time.time()
+print(f"\n[{time.strftime('%H:%M:%S')}] 🚀 Starting MeetMap Backend...")
+
 app = FastAPI(title="MeetMap Prototype API")
 
 # CORS middleware
+cors_start = time.time()
+# Get frontend URL from environment (for production) or use localhost defaults
+FRONTEND_URL = os.getenv("FRONTEND_URL", "")
+allowed_origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+]
+if FRONTEND_URL:
+    allowed_origins.append(FRONTEND_URL)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+cors_elapsed = time.time() - cors_start
+print(f"[{time.strftime('%H:%M:%S')}] ✅ CORS middleware configured ({cors_elapsed:.3f}s)")
 
 # Initialize services
+service_start = time.time()
+print(f"[{time.strftime('%H:%M:%S')}] 📦 Initializing MeetMapService...")
 meetmap_service = MeetMapService()
+service_elapsed = time.time() - service_start
+print(f"[{time.strftime('%H:%M:%S')}] ✅ MeetMapService initialization complete ({service_elapsed:.2f}s)")
+
+app_elapsed = time.time() - app_start
+print(f"[{time.strftime('%H:%M:%S')}] 🎉 Backend initialization complete! (Total: {app_elapsed:.2f}s)\n")
 
 
 @app.get("/")

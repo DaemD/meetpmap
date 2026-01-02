@@ -19,6 +19,11 @@ class MeetMapService:
     """Service for building semantic idea-evolution graph"""
     
     def __init__(self):
+        service_start = time.time()
+        print(f"\n[{time.strftime('%H:%M:%S')}] 🚀 Initializing MeetMapService...")
+        
+        # Initialize OpenAI client
+        client_start = time.time()
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError(
@@ -26,18 +31,27 @@ class MeetMapService:
                 "Please set it in your .env file or environment variables."
             )
         self.client = OpenAI(api_key=api_key)
+        client_elapsed = time.time() - client_start
+        print(f"[{time.strftime('%H:%M:%S')}] ✅ OpenAI client initialized ({client_elapsed:.3f}s)")
+        
         self.node_counter = 0
         self.root_sent = False  # Track if root node has been sent to frontend
         
         # Initialize graph manager (creates root node)
+        graph_start = time.time()
         self.graph_manager = GraphManager()
+        graph_elapsed = time.time() - graph_start
+        print(f"[{time.strftime('%H:%M:%S')}] ✅ GraphManager initialized ({graph_elapsed:.3f}s)")
         
-        # Initialize embedding model
-        start_time = time.time()
-        print(f"[{time.strftime('%H:%M:%S')}] 📦 Loading embedding model...")
+        # Load embedding model at startup (required for constant embedding generation)
+        model_start = time.time()
+        print(f"[{time.strftime('%H:%M:%S')}] 📦 Loading embedding model 'all-MiniLM-L6-v2'...")
         self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-        elapsed = time.time() - start_time
-        print(f"[{time.strftime('%H:%M:%S')}] ✅ Embedding model loaded (took {elapsed:.2f}s)")
+        model_elapsed = time.time() - model_start
+        print(f"[{time.strftime('%H:%M:%S')}] ✅ Embedding model loaded ({model_elapsed:.2f}s)")
+        
+        service_elapsed = time.time() - service_start
+        print(f"[{time.strftime('%H:%M:%S')}] 🎉 MeetMapService ready! (Total: {service_elapsed:.2f}s)\n")
     
     async def extract_nodes(self, chunk: TranscriptChunk) -> Tuple[List[NodeData], List[EdgeData]]:
         """
@@ -321,7 +335,7 @@ Return ONLY the JSON object, no other text."""
             
             # Create edge from parent to this node
             if graph_node.parent_id:
-                    edge = EdgeData(
+                edge = EdgeData(
                     from_node=graph_node.parent_id,
                     to_node=graph_node.id,
                     type="extends" if graph_node.parent_id != "root" else "root",
@@ -329,8 +343,8 @@ Return ONLY the JSON object, no other text."""
                     metadata={
                         "relationship": "parent_child"
                     }
-                    )
-                    edges.append(edge)
+                )
+                edges.append(edge)
         
         return nodes, edges
     

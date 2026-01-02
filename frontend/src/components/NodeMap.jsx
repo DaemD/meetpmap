@@ -51,9 +51,6 @@ function ActionNode({ data }) {
 
 function IdeaNode({ data, id: nodeId }) {
   const isRoot = data.isRoot || false
-  const [maturity, setMaturity] = useState(null)
-  const [influence, setInfluence] = useState(null)
-  const [isLoading, setIsLoading] = useState(false)
   const isHovered = data.isHovered || false
 
   // Get cluster color from metadata
@@ -73,24 +70,9 @@ function IdeaNode({ data, id: nodeId }) {
     borderWidth: '2px'
   } : {}
 
-  // Fetch maturity and influence on mount and when data changes
-  useEffect(() => {
-    if (!isRoot && nodeId) {
-      setIsLoading(true)
-      Promise.all([
-        api.getMaturity(nodeId).catch(() => ({ score: 0 })),
-        api.getInfluence(nodeId).catch(() => ({ score: 0 }))
-      ]).then(([maturityData, influenceData]) => {
-        setMaturity(maturityData.score || 0)
-        setInfluence(influenceData.score || 0)
-        setIsLoading(false)
-      })
-    }
-  }, [nodeId, isRoot])
-
   return (
     <div 
-      className={`custom-node idea-node${isRoot ? ' root-node' : ''} ${isHovered ? 'hovered' : ''} ${data.isClicked ? 'clicked' : ''} ${data.inDownwardPath ? 'in-downward-path' : ''} ${data.inUpwardPath ? 'in-upward-path' : ''}`}
+      className={`custom-node idea-node${isRoot ? ' root-node' : ''} ${isHovered ? 'hovered' : ''}`}
       style={nodeStyle}
     >
       <Handle type="target" position={Position.Top} />
@@ -98,12 +80,6 @@ function IdeaNode({ data, id: nodeId }) {
       <div className="node-content">{data.label}</div>
       {data.timestamp && !isRoot && (
         <div className="node-meta">{data.timestamp.toFixed(1)}s</div>
-      )}
-      {!isRoot && isHovered && !isLoading && (
-        <div className="node-tooltip">
-          <div>Maturity: {maturity}%</div>
-          <div>Influence: {influence}</div>
-        </div>
       )}
       <Handle type="source" position={Position.Bottom} />
     </div>
@@ -200,13 +176,14 @@ const getLayoutedElements = (nodes, edges, userModifiedNodes = new Set(), direct
 export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [hoveredNodeId, setHoveredNodeId] = useState(null)
-  const [clickedNodeId, setClickedNodeId] = useState(null)
-  const [clickState, setClickState] = useState(0) // 0=normal, 1=down, 2=up, 3=clear
-  const [downwardPathNodes, setDownwardPathNodes] = useState(new Set())
-  const [upwardPathNodes, setUpwardPathNodes] = useState(new Set())
   const [userModifiedNodes, setUserModifiedNodes] = useState(new Set()) // Track nodes user has manually moved
-  const [isUserDragging, setIsUserDragging] = useState(false) // Track if user is actively dragging/panning
+  const [hasDeviated, setHasDeviated] = useState(false) // Track if user has deviated from original position
   const reactFlowInstance = useRef(null)
+  const hoveredNodeIdRef = useRef(null) // Ref to track hover state for layout effect
+  const isAutoFittingRef = useRef(false) // Track if we're auto-fitting to prevent deviation detection
+  const initialViewportRef = useRef(null) // Store initial viewport (x, y, zoom) to detect deviation
+  const previousNodeCountRef = useRef(0) // Track previous node count to detect new nodes
+  const nodesRef = useRef([]) // Ref to store current nodes for layout effect
   
   // Handle node drag end - mark node as user-modified
   const onNodeDragStop = useCallback((event, node) => {
@@ -216,16 +193,70 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
   // Handle ReactFlow initialization
   const onInit = useCallback((instance) => {
     reactFlowInstance.current = instance
+    // Store initial viewport (x, y, zoom) to detect deviation
+    const viewport = instance.getViewport()
+    initialViewportRef.current = {
+      x: viewport.x,
+      y: viewport.y,
+      zoom: viewport.zoom
+    }
   }, [])
   
-  // Track when user starts dragging/panning the map
+  // Track when user starts moving (for potential future use)
   const onMoveStart = useCallback(() => {
-    setIsUserDragging(true)
+    // Can be used for tracking if needed
   }, [])
   
-  // Track when user stops dragging/panning the map
+  // Track when user stops moving (for potential future use)
   const onMoveEnd = useCallback(() => {
-    setIsUserDragging(false)
+    // Can be used for tracking if needed
+  }, [])
+  
+  // Track viewport changes (zoom and pan) to detect deviation
+  const onViewportChange = useCallback((viewport) => {
+    // Don't detect changes during auto-fit
+    if (isAutoFittingRef.current || !initialViewportRef.current) {
+      return
+    }
+    
+    const initial = initialViewportRef.current
+    const zoomDiff = Math.abs(viewport.zoom - initial.zoom)
+    const panDiff = Math.sqrt(
+      Math.pow(viewport.x - initial.x, 2) + 
+      Math.pow(viewport.y - initial.y, 2)
+    )
+    
+    // If user has zoomed or panned significantly, mark as deviated
+    if (zoomDiff > 0.01 || panDiff > 10) {
+      setHasDeviated(true)
+    }
+  }, [])
+  
+  
+  // Handle recentre button click
+  const handleRecentre = useCallback(() => {
+    if (reactFlowInstance.current) {
+      isAutoFittingRef.current = true
+      
+      reactFlowInstance.current.fitView({ 
+        padding: 0.2, 
+        duration: 400
+      })
+      
+      setTimeout(() => {
+        const viewport = reactFlowInstance.current?.getViewport()
+        if (viewport) {
+          // Update initial viewport to the new centered position
+          initialViewportRef.current = {
+            x: viewport.x,
+            y: viewport.y,
+            zoom: viewport.zoom
+          }
+          setHasDeviated(false) // Reset deviation state
+        }
+        isAutoFittingRef.current = false
+      }, 500)
+    }
   }, [])
   
   const reactFlowEdges = useMemo(() => {
@@ -271,6 +302,7 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
   // Convert nodeData to ReactFlow format and apply dagre layout
   useEffect(() => {
     if (!nodeData || nodeData.length === 0) {
+      previousNodeCountRef.current = 0
       return
     }
     
@@ -278,23 +310,23 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
     
     // Convert nodeData to ReactFlow node format
     const flowNodes = nodeData.map(node => {
-      // Check if this node already exists in current nodes (to preserve position if user-modified)
-      const existingNode = nodes.find(n => n.id === node.id)
+      // Check if this node already exists in current nodes (to preserve position and styles if user-modified)
+      // Use ref to avoid dependency on nodes state
+      const existingNode = nodesRef.current.find(n => n.id === node.id)
       const existingPosition = existingNode?.position
+      const existingStyle = existingNode?.style // Preserve existing styles (including opacity from hover)
       
       return {
         id: node.id,
         type: node.type || 'idea',
         position: existingPosition || { x: 0, y: 0 }, // Temporary position, will be updated by dagre
+        style: existingStyle, // Preserve existing styles
         data: {
           label: node.text || '',
           timestamp: node.timestamp,
           topic: node.topic,
           confidence: node.confidence,
           isRoot: node.id === 'root' || node.metadata?.is_root,
-          isClicked: clickedNodeId === node.id,
-          inDownwardPath: downwardPathNodes.has(node.id),
-          inUpwardPath: upwardPathNodes.has(node.id),
           isHovered: hoveredNodeId === node.id,
           metadata: node.metadata || {},
         },
@@ -309,163 +341,210 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
         reactFlowEdges, 
         userModifiedNodes
       )
-      console.log('NodeMap: Layouted nodes:', layoutedNodes.map(n => ({ id: n.id, pos: n.position })))
-      setNodes(layoutedNodes)
+      // Preserve existing styles (opacity) when applying layout, including hover state
+      const currentHoveredId = hoveredNodeIdRef.current
+      const nodesWithPreservedStyles = layoutedNodes.map(layoutedNode => {
+        // Use ref to avoid dependency on nodes state
+        const existingNode = nodesRef.current.find(n => n.id === layoutedNode.id)
+        const isHovered = currentHoveredId === layoutedNode.id
+        const shouldDim = currentHoveredId !== null && !isHovered
+        
+        // Preserve existing style or apply hover-based opacity
+        const preservedStyle = existingNode?.style || {}
+        return {
+          ...layoutedNode,
+          style: {
+            ...preservedStyle,
+            opacity: shouldDim ? 0.4 : (preservedStyle.opacity !== undefined ? preservedStyle.opacity : 1),
+          },
+        }
+      })
+      console.log('NodeMap: Layouted nodes:', nodesWithPreservedStyles.map(n => ({ id: n.id, pos: n.position })))
+      setNodes(nodesWithPreservedStyles)
+      // Update ref
+      nodesRef.current = nodesWithPreservedStyles
       
-      // Auto-fit to center the graph, but only if user is not actively dragging
-      if (!isUserDragging) {
+      // Auto-fit to center ONLY when new nodes are added (compare node count)
+      const currentNodeCount = nodeData.length
+      const previousNodeCount = previousNodeCountRef.current
+      
+      if (currentNodeCount > previousNodeCount && reactFlowInstance.current) {
+        // New nodes were added - auto-center
+        isAutoFittingRef.current = true
         setTimeout(() => {
           if (reactFlowInstance.current) {
             reactFlowInstance.current.fitView({ 
               padding: 0.2, 
               duration: 400
             })
+            // Update initial viewport after auto-fit
+            setTimeout(() => {
+              const viewport = reactFlowInstance.current?.getViewport()
+              if (viewport) {
+                initialViewportRef.current = {
+                  x: viewport.x,
+                  y: viewport.y,
+                  zoom: viewport.zoom
+                }
+                setHasDeviated(false) // Reset deviation after auto-centering new nodes
+              }
+              isAutoFittingRef.current = false
+            }, 500)
           }
         }, 100)
       }
+      
+      // Update previous node count
+      previousNodeCountRef.current = currentNodeCount
     } else if (flowNodes.length > 0) {
       // No edges yet, position root at center-top, others below
       console.log('NodeMap: No edges, using simple positioning for', flowNodes.length, 'nodes')
+      // Preserve hover styles when positioning nodes without edges
+      const currentHoveredId = hoveredNodeIdRef.current
       const positionedNodes = flowNodes.map((node, index) => {
-        if (node.data.isRoot) {
-          return { ...node, position: { x: 400, y: 50 } }
+        // Use ref to avoid dependency on nodes state
+        const existingNode = nodesRef.current.find(n => n.id === node.id)
+        const baseNode = node.data.isRoot
+          ? { ...node, position: { x: 400, y: 50 } }
+          : { ...node, position: existingNode?.position || { x: 400, y: 150 + index * 150 } }
+        
+        // Preserve existing styles and apply hover state
+        const isHovered = currentHoveredId === node.id
+        const shouldDim = currentHoveredId !== null && !isHovered
+        const preservedStyle = existingNode?.style || {}
+        
+        return {
+          ...baseNode,
+          style: {
+            ...preservedStyle,
+            opacity: shouldDim ? 0.4 : (preservedStyle.opacity !== undefined ? preservedStyle.opacity : 1),
+          },
         }
-        // For nodes without edges, use simple positioning
-        const existingNode = nodes.find(n => n.id === node.id)
-        return { ...node, position: existingNode?.position || { x: 400, y: 150 + index * 150 } }
       })
       console.log('NodeMap: Positioned nodes:', positionedNodes.map(n => ({ id: n.id, pos: n.position })))
       setNodes(positionedNodes)
+      // Update ref
+      nodesRef.current = positionedNodes
       
-      // Auto-fit to center the graph, but only if user is not actively dragging
-      if (!isUserDragging) {
+      // Auto-fit to center ONLY when new nodes are added (compare node count)
+      const currentNodeCount = nodeData.length
+      const previousNodeCount = previousNodeCountRef.current
+      
+      if (currentNodeCount > previousNodeCount && reactFlowInstance.current) {
+        // New nodes were added - auto-center
+        isAutoFittingRef.current = true
         setTimeout(() => {
           if (reactFlowInstance.current) {
             reactFlowInstance.current.fitView({ 
               padding: 0.2, 
               duration: 400
             })
+            setTimeout(() => {
+              const viewport = reactFlowInstance.current?.getViewport()
+              if (viewport) {
+                initialViewportRef.current = {
+                  x: viewport.x,
+                  y: viewport.y,
+                  zoom: viewport.zoom
+                }
+                setHasDeviated(false)
+              }
+              isAutoFittingRef.current = false
+            }, 500)
+          }
+        }, 100)
+      } else if (previousNodeCount === 0 && currentNodeCount > 0 && reactFlowInstance.current) {
+        // First time nodes appear - also auto-center and set initial viewport
+        isAutoFittingRef.current = true
+        setTimeout(() => {
+          if (reactFlowInstance.current) {
+            reactFlowInstance.current.fitView({ 
+              padding: 0.2, 
+              duration: 400
+            })
+            setTimeout(() => {
+              const viewport = reactFlowInstance.current?.getViewport()
+              if (viewport) {
+                initialViewportRef.current = {
+                  x: viewport.x,
+                  y: viewport.y,
+                  zoom: viewport.zoom
+                }
+                setHasDeviated(false)
+              }
+              isAutoFittingRef.current = false
+            }, 500)
           }
         }, 100)
       }
-    }
-  }, [nodeData, reactFlowEdges, clickedNodeId, downwardPathNodes, upwardPathNodes, hoveredNodeId, userModifiedNodes, isUserDragging])
-
-  // Handle node click
-  const handleNodeClick = async (event, node) => {
-    const nodeId = node.id
-    
-    if (clickedNodeId === nodeId) {
-      // Same node clicked - cycle through states
-      if (clickState === 0) {
-        // First click: show downward path
-        setClickState(1)
-        await fetchDownwardPath(nodeId)
-      } else if (clickState === 1) {
-        // Second click: show upward path
-        setClickState(2)
-        await fetchUpwardPath(nodeId)
-      } else {
-        // Third click: clear all
-        setClickState(0)
-        clearHighlights()
-      }
-    } else {
-      // Different node clicked - reset to state 1
-      setClickedNodeId(nodeId)
-      setClickState(1)
-      await fetchDownwardPath(nodeId)
-    }
-  }
-
-  const fetchDownwardPath = async (nodeId) => {
-    try {
-      const response = await api.getDownwardPath(nodeId)
-      const pathNodes = new Set(response.all_nodes_in_paths || [])
-      setDownwardPathNodes(pathNodes)
-      setUpwardPathNodes(new Set())
-      updateNodeStyles(pathNodes, new Set(), nodeId, hoveredNodeId)
-    } catch (error) {
-      console.error('Error fetching downward path:', error)
-    }
-  }
-
-  const fetchUpwardPath = async (nodeId) => {
-    try {
-      const response = await api.getUpwardPath(nodeId)
-      const pathNodes = new Set(response.all_nodes || [])
-      setUpwardPathNodes(pathNodes)
-      setDownwardPathNodes(new Set())
-      updateNodeStyles(new Set(), pathNodes, nodeId, hoveredNodeId)
-    } catch (error) {
-      console.error('Error fetching upward path:', error)
-    }
-  }
-
-  const clearHighlights = () => {
-    setDownwardPathNodes(new Set())
-    setUpwardPathNodes(new Set())
-    setClickedNodeId(null)
-    updateNodeStyles(new Set(), new Set(), null, hoveredNodeId)
-  }
-
-  const updateNodeStyles = (downNodes, upNodes, clickedId, hoveredId) => {
-    setNodes((nds) => {
-      if (nds.length === 0) return nds // Don't update if no nodes
       
-      return nds.map((node) => {
-        const isInDownPath = downNodes.has(node.id)
-        const isInUpPath = upNodes.has(node.id)
-        const isClicked = clickedId === node.id
-        const isHovered = hoveredId === node.id
-        const shouldDim = (clickedId || hoveredId) && !isInDownPath && !isInUpPath && !isClicked && !isHovered
+      // Update previous node count
+      previousNodeCountRef.current = currentNodeCount
+    }
+  }, [nodeData, reactFlowEdges, userModifiedNodes]) // Removed nodes from deps to prevent infinite loop
 
-        // Preserve all existing node properties
+  // Update ref when hover changes
+  useEffect(() => {
+    hoveredNodeIdRef.current = hoveredNodeId
+  }, [hoveredNodeId])
+  
+  // Update node styles based on hover state (simplified - just dim non-hovered nodes)
+  // This effect runs independently and preserves node positions
+  useEffect(() => {
+    setNodes((nds) => {
+      if (nds.length === 0) return nds
+      
+      const currentHoveredId = hoveredNodeIdRef.current
+      
+      const updatedNodes = nds.map((node) => {
+        const isHovered = currentHoveredId === node.id
+        const shouldDim = currentHoveredId !== null && !isHovered
+
         return {
           ...node,
+          // Preserve all existing properties, only update opacity and hover state
           style: {
             ...node.style,
-            opacity: shouldDim ? 0.3 : 1,
-            zIndex: (isClicked || isHovered) ? 10 : 1,
+            opacity: shouldDim ? 0.4 : 1,
           },
           data: {
             ...node.data,
-            isClicked: isClicked,
-            inDownwardPath: isInDownPath,
-            inUpwardPath: isInUpPath,
             isHovered: isHovered,
           }
         }
       })
+      
+      // Update ref
+      nodesRef.current = updatedNodes
+      return updatedNodes
     })
-  }
+  }, [hoveredNodeId, setNodes]) // setNodes is stable, so this is safe
 
-  // Update edge styles based on paths
+  // Update edge styles based on hover (dim edges when hovering)
   useEffect(() => {
     setEdges((eds) => eds.map((edge) => {
-      const isInDownPath = downwardPathNodes.has(edge.source) && downwardPathNodes.has(edge.target)
-      const isInUpPath = upwardPathNodes.has(edge.source) && upwardPathNodes.has(edge.target)
-      const shouldDim = (clickedNodeId || hoveredNodeId) && !isInDownPath && !isInUpPath
+      const shouldDim = hoveredNodeId !== null && 
+                       hoveredNodeId !== edge.source && 
+                       hoveredNodeId !== edge.target
 
       return {
         ...edge,
         style: {
           ...edge.style,
-          stroke: isInDownPath ? '#4CAF50' : isInUpPath ? '#FFC107' : edge.style?.stroke || '#b1b1b7',
-          strokeWidth: isInDownPath || isInUpPath ? 4 : edge.style?.strokeWidth || 2,
-          opacity: shouldDim ? 0.2 : 1,
+          opacity: shouldDim ? 0.3 : 1,
         }
       }
     }))
-  }, [downwardPathNodes, upwardPathNodes, clickedNodeId, hoveredNodeId, setEdges])
+  }, [hoveredNodeId, setEdges])
 
-  // Update nodes when hover state or path state changes
+  // Update edges when edgeData changes - only after nodes are set
   useEffect(() => {
-    updateNodeStyles(downwardPathNodes, upwardPathNodes, clickedNodeId, hoveredNodeId)
-  }, [hoveredNodeId, clickedNodeId, downwardPathNodes, upwardPathNodes])
-
-  // Update edges when edgeData changes
-  useEffect(() => {
+    // Don't validate edges if nodes haven't been set yet
+    if (nodes.length === 0 && reactFlowEdges.length > 0) {
+      console.log('NodeMap: Waiting for nodes before validating edges')
+      return
+    }
+    
     console.log('NodeMap: Updating edges -', reactFlowEdges.length, 'edges')
     console.log('NodeMap: Current nodes:', nodes.map(n => n.id))
     console.log('NodeMap: Edge details:', reactFlowEdges.map(e => `${e.source}→${e.target}`))
@@ -507,7 +586,13 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
           onInit={onInit}
           onMoveStart={onMoveStart}
           onMoveEnd={onMoveEnd}
-          onNodeClick={handleNodeClick}
+          onViewportChange={onViewportChange}
+          onWheel={(event) => {
+            // Track wheel zoom - mark as deviated immediately
+            if (event.deltaY !== 0 && !isAutoFittingRef.current) {
+              setHasDeviated(true)
+            }
+          }}
           onNodeDragStop={onNodeDragStop}
           onNodeMouseEnter={(event, node) => setHoveredNodeId(node.id)}
           onNodeMouseLeave={() => setHoveredNodeId(null)}
@@ -522,7 +607,34 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
         >
           <Background />
           <Controls />
-          <MiniMap />
+          <MiniMap 
+            nodeColor={(node) => {
+              // Get cluster color from node data
+              const clusterColor = node.data?.metadata?.cluster_color
+              if (clusterColor) {
+                return clusterColor
+              }
+              // Default colors based on node type
+              if (node.data?.isRoot) return '#4caf50'
+              if (node.type === 'decision') return '#2196f3'
+              if (node.type === 'action') return '#4caf50'
+              if (node.type === 'proposal') return '#e91e63'
+              return '#ff9800' // idea
+            }}
+            maskColor="rgba(0, 0, 0, 0.1)"
+            style={{
+              backgroundColor: '#fafafa',
+            }}
+          />
+          {hasDeviated && (
+            <button
+              className="recentre-button"
+              onClick={handleRecentre}
+              title="Recentre graph"
+            >
+              ↻ Recentre
+            </button>
+          )}
         </ReactFlow>
       )}
     </div>
