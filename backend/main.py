@@ -70,6 +70,13 @@ async def health():
 async def process_transcript_chunk(chunk: dict):
     """Process a single transcript chunk and return nodes/edges"""
     try:
+        # Validate chunk structure
+        if not chunk or not isinstance(chunk, dict):
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Invalid chunk format. Expected a dictionary."}
+            )
+        
         transcript_chunk = TranscriptChunk(**chunk)
         
         # Note: user_id is optional - if not provided, nodes are shared across all users
@@ -86,6 +93,13 @@ async def process_transcript_chunk(chunk: dict):
             "edges": [edge.model_dump() for edge in edges]
         }
         
+    except ValueError as e:
+        # Pydantic validation errors
+        print(f"❌ Validation error: {e}")
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": f"Invalid chunk data: {str(e)}"}
+        )
     except Exception as e:
         print(f"❌ Error processing chunk: {e}")
         import traceback
@@ -100,9 +114,19 @@ async def process_transcript_chunk(chunk: dict):
 async def get_downward_path(node_id: str):
     """Get all paths from node down to its last children"""
     try:
+        if not node_id or not node_id.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "node_id is required"}
+            )
         graph_manager = meetmap_service.graph_manager
         result = graph_manager.get_downward_paths(node_id)
         return {"status": "success", **result}
+    except KeyError as e:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "error", "message": f"Node not found: {node_id}"}
+        )
     except Exception as e:
         return JSONResponse(
             status_code=500,
@@ -114,9 +138,19 @@ async def get_downward_path(node_id: str):
 async def get_upward_path(node_id: str):
     """Get path from node up to root"""
     try:
+        if not node_id or not node_id.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "node_id is required"}
+            )
         graph_manager = meetmap_service.graph_manager
         result = graph_manager.get_path_to_root(node_id)
         return {"status": "success", **result}
+    except KeyError as e:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "error", "message": f"Node not found: {node_id}"}
+        )
     except Exception as e:
         return JSONResponse(
             status_code=500,
@@ -128,9 +162,19 @@ async def get_upward_path(node_id: str):
 async def get_maturity(node_id: str):
     """Get maturity score for a node"""
     try:
+        if not node_id or not node_id.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "node_id is required"}
+            )
         graph_manager = meetmap_service.graph_manager
         result = graph_manager.calculate_maturity(node_id)
         return {"status": "success", **result}
+    except KeyError as e:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "error", "message": f"Node not found: {node_id}"}
+        )
     except Exception as e:
         return JSONResponse(
             status_code=500,
@@ -142,9 +186,19 @@ async def get_maturity(node_id: str):
 async def get_influence(node_id: str):
     """Get influence score for a node"""
     try:
+        if not node_id or not node_id.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "node_id is required"}
+            )
         graph_manager = meetmap_service.graph_manager
         result = graph_manager.calculate_influence(node_id)
         return {"status": "success", **result}
+    except KeyError as e:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "error", "message": f"Node not found: {node_id}"}
+        )
     except Exception as e:
         return JSONResponse(
             status_code=500,
