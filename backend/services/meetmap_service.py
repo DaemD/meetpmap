@@ -118,7 +118,8 @@ class MeetMapService:
                 parent_id = await self.decide_placement(
                     candidate_summary=idea_text,
                     candidate_embedding=embedding,
-                    similar_nodes=similar_nodes
+                    similar_nodes=similar_nodes,
+                    user_id=chunk.user_id
                 )
             else:
                 # No nodes in graph - place under user-specific root
@@ -171,7 +172,7 @@ class MeetMapService:
         # Step 5: Convert graph structure to frontend format
         step5_start = time.time()
         print(f"[{time.strftime('%H:%M:%S')}] STEP 5: Converting to frontend format...")
-        nodes, edges = self._graph_to_frontend_format(new_graph_nodes)
+        nodes, edges = self._graph_to_frontend_format(new_graph_nodes, user_id=chunk.user_id)
         step5_elapsed = time.time() - step5_start
         print(f"[{time.strftime('%H:%M:%S')}] STEP 5: Completed in {step5_elapsed:.3f}s")
         
@@ -296,33 +297,50 @@ Return ONLY the JSON object, no other text."""
     
     def _graph_to_frontend_format(
         self,
-        new_graph_nodes: List
+        new_graph_nodes: List,
+        user_id: Optional[str] = None
     ) -> Tuple[List[NodeData], List[EdgeData]]:
         """
         Convert graph nodes to frontend-compatible format
         Creates NodeData and EdgeData from parent-child relationships
         Includes root node only once (on first chunk)
+        
+        Args:
+            new_graph_nodes: List of newly created GraphNode objects
+            user_id: Optional user ID to get user-specific root
         """
         nodes = []
         edges = []
         
-        # Include root node only once (on first chunk with new nodes)
-        if not self.root_sent and len(new_graph_nodes) > 0:
-            root = self.graph_manager.get_root()
-            root_node_data = NodeData(
-                id=root.id,
-                text=root.summary,
-                type="idea",
-                timestamp=0.0,
-                confidence=1.0,
-                metadata={
-                    "depth": 0,
-                    "is_root": True,
-                    **root.metadata
-                }
-            )
-            nodes.append(root_node_data)
-            self.root_sent = True
+        # Determine root ID (user-specific or global)
+        if user_id:
+            root_id = f"root_{user_id}"
+        else:
+            root_id = self.graph_manager.root_id
+        
+        # Include root node if it exists and we have new nodes
+        # Check if any new node has this root as parent (indicates root was just created or is needed)
+        if len(new_graph_nodes) > 0:
+            root = self.graph_manager.get_root(user_id=user_id)
+            if root:
+                # Check if any new node connects to this root
+                has_root_connection = any(
+                    node.parent_id == root.id for node in new_graph_nodes
+                )
+                if has_root_connection:
+                    root_node_data = NodeData(
+                        id=root.id,
+                        text=root.summary,
+                        type="idea",
+                        timestamp=0.0,
+                        confidence=1.0,
+                        metadata={
+                            "depth": 0,
+                            "is_root": True,
+                            **root.metadata
+                        }
+                    )
+                    nodes.append(root_node_data)
         
         for graph_node in new_graph_nodes:
             # Get cluster info
@@ -350,10 +368,14 @@ Return ONLY the JSON object, no other text."""
             
             # Create edge from parent to this node
             if graph_node.parent_id:
+                # Determine if parent is a root node (global or user-specific)
+                is_root_parent = (graph_node.parent_id == self.graph_manager.root_id) or \
+                                (user_id and graph_node.parent_id == f"root_{user_id}")
+                
                 edge = EdgeData(
                     from_node=graph_node.parent_id,
                     to_node=graph_node.id,
-                    type="extends" if graph_node.parent_id != "root" else "root",
+                    type="root" if is_root_parent else "extends",
                     strength=1.0,
                     metadata={
                         "relationship": "parent_child"
@@ -367,7 +389,8 @@ Return ONLY the JSON object, no other text."""
         self,
         candidate_summary: str,
         candidate_embedding: List[float],
-        similar_nodes: List[tuple[str, float, Any]]  # (node_id, similarity, GraphNode)
+        similar_nodes: List[tuple[str, float, Any]],  # (node_id, similarity, GraphNode)
+        user_id: Optional[str] = None
     ) -> str:
         """
         Use LLM to decide node placement based on global similarity search
@@ -472,6 +495,13 @@ Return ONLY the JSON object, no other text."""
                 print(f"      ⚠️ LLM returned invalid target_node_id: {target_node_id}, using fallback")
                 target_node_id = similar_nodes[0][0]  # Use first similar node
             
+            # Get appropriate root ID (user-specific or global)
+            if user_id:
+                user_root = self.graph_manager.get_root(user_id=user_id)
+                fallback_root_id = user_root.id if user_root else self.graph_manager.root_id
+            else:
+                fallback_root_id = self.graph_manager.root_id
+            
             # Enforce placement rules based on decision type
             if target_node_id:
                 target_node = self.graph_manager.get_node(target_node_id)
@@ -481,16 +511,16 @@ Return ONLY the JSON object, no other text."""
                         parent_id = target_node_id
                     elif decision == "branch":
                         # Place as sibling of target (child of target's parent)
-                        parent_id = target_node.parent_id if target_node.parent_id else self.graph_manager.root_id
+                        parent_id = target_node.parent_id if target_node.parent_id else fallback_root_id
                     else:
                         # Unknown decision type, use target's parent as fallback
-                        parent_id = target_node.parent_id if target_node.parent_id else self.graph_manager.root_id
+                        parent_id = target_node.parent_id if target_node.parent_id else fallback_root_id
                 else:
                     # Target node doesn't exist, use root as fallback
-                    parent_id = self.graph_manager.root_id
+                    parent_id = fallback_root_id
             else:
                 # No target_node_id, use root as fallback
-                parent_id = self.graph_manager.root_id
+                parent_id = fallback_root_id
             
             # Final validation: ensure parent_id exists in graph
             if not self.graph_manager.get_node(parent_id):
@@ -498,11 +528,11 @@ Return ONLY the JSON object, no other text."""
                 if target_node_id:
                     target_node = self.graph_manager.get_node(target_node_id)
                     if target_node:
-                        parent_id = target_node.parent_id if target_node.parent_id else self.graph_manager.root_id
+                        parent_id = target_node.parent_id if target_node.parent_id else fallback_root_id
                     else:
-                        parent_id = self.graph_manager.root_id
+                        parent_id = fallback_root_id
                 else:
-                    parent_id = self.graph_manager.root_id
+                    parent_id = fallback_root_id
             
             # Get parent node description for logging
             parent_node = self.graph_manager.get_node(parent_id)
@@ -519,11 +549,17 @@ Return ONLY the JSON object, no other text."""
             print(f"      ❌ Error in LLM placement decision: {e}")
             import traceback
             traceback.print_exc()
+            # Get appropriate root ID (user-specific or global)
+            if user_id:
+                user_root = self.graph_manager.get_root(user_id=user_id)
+                fallback_root_id = user_root.id if user_root else self.graph_manager.root_id
+            else:
+                fallback_root_id = self.graph_manager.root_id
             # Fallback: use most similar node's parent
             if similar_nodes:
                 best_match_id, best_similarity, best_node = similar_nodes[0]
-                return best_node.parent_id if best_node.parent_id else self.graph_manager.root_id
-            return self.graph_manager.root_id
+                return best_node.parent_id if best_node.parent_id else fallback_root_id
+            return fallback_root_id
     
     def get_graph_summary(self) -> dict:
         """Get summary of current graph state (for debugging)"""
