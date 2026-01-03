@@ -84,12 +84,9 @@ class GraphManager:
         """Get root node, optionally for a specific user"""
         if user_id is None:
             return self.nodes.get(self.root_id)
-        # For user-specific root, check if root has user_id or create user-specific root
-        root = self.nodes.get(self.root_id)
-        if root and root.metadata.get("user_id") == user_id:
-            return root
-        # If no user-specific root exists, return None (will be created on first node)
-        return None
+        # For user-specific root, look for root_{user_id}
+        user_root_id = f"root_{user_id}"
+        return self.nodes.get(user_root_id)
     
     def get_children(self, node_id: str) -> List[GraphNode]:
         """Get all children of a node"""
@@ -289,19 +286,20 @@ class GraphManager:
         """Get all nodes in the graph, optionally filtered by user_id"""
         if user_id is None:
             return list(self.nodes.values())
-        # Filter nodes by user_id in metadata
+        # Filter nodes by user_id in metadata, including user-specific root
+        user_root_id = f"root_{user_id}"
         return [node for node in self.nodes.values() 
                 if node.metadata.get("user_id") == user_id or 
-                (node.id == self.root_id and node.metadata.get("user_id") == user_id) or
-                (node.id == self.root_id and user_id is None)]
+                node.id == user_root_id]
     
     def get_all_nodes_except_root(self, user_id: Optional[str] = None) -> List[GraphNode]:
         """Get all nodes except root (for global search), optionally filtered by user_id"""
         if user_id is None:
             return [node for node in self.nodes.values() if node.id != self.root_id]
-        # Filter nodes by user_id, excluding root
+        # Filter nodes by user_id, excluding user-specific root
+        user_root_id = f"root_{user_id}"
         return [node for node in self.nodes.values() 
-                if node.id != self.root_id and node.metadata.get("user_id") == user_id]
+                if node.id != user_root_id and node.metadata.get("user_id") == user_id]
     
     def get_all_edges(self) -> List[dict]:
         """

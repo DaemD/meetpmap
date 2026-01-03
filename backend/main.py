@@ -184,8 +184,9 @@ async def get_graph_state(user_id: Optional[str] = Query(None, description="Filt
         
         # Convert all other nodes
         for graph_node in all_graph_nodes:
-            if graph_node.id == graph_manager.root_id:
-                continue  # Already added root
+            # Skip root nodes (already added above)
+            if graph_node.id == graph_manager.root_id or (user_id and graph_node.id == f"root_{user_id}"):
+                continue
             
             cluster_id = graph_node.metadata.get("cluster_id")
             cluster_color = graph_manager.get_cluster_color(cluster_id) if cluster_id is not None else None
@@ -210,10 +211,14 @@ async def get_graph_state(user_id: Optional[str] = Query(None, description="Filt
             
             # Create edge from parent to this node
             if graph_node.parent_id:
+                # Determine if parent is a root node (global or user-specific)
+                is_root_parent = (graph_node.parent_id == graph_manager.root_id) or \
+                                (user_id and graph_node.parent_id == f"root_{user_id}")
+                
                 edge = EdgeData(
                     from_node=graph_node.parent_id,
                     to_node=graph_node.id,
-                    type="extends" if graph_node.parent_id != graph_manager.root_id else "root",
+                    type="root" if is_root_parent else "extends",
                     strength=1.0,
                     metadata={
                         "relationship": "parent_child"
