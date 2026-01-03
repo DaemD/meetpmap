@@ -29,6 +29,8 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "")
 allowed_origins = [
     "http://localhost:3000",
     "http://localhost:5173",
+    "https://meetpmap.vercel.app",  # Vercel deployment
+    "https://graph.miles.app",  # Custom domain (when ready)
 ]
 if FRONTEND_URL:
     allowed_origins.append(FRONTEND_URL)
