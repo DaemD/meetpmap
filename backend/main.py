@@ -3,13 +3,14 @@ MeetMap Prototype - Main FastAPI Application
 Simple pipeline: Receive chunk → Extract nodes → Return to frontend
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 from dotenv import load_dotenv
 import os
 import time
+from typing import Optional
 
 from services.meetmap_service import MeetMapService
 from models.schemas import TranscriptChunk
@@ -68,6 +69,9 @@ async def process_transcript_chunk(chunk: dict):
     """Process a single transcript chunk and return nodes/edges"""
     try:
         transcript_chunk = TranscriptChunk(**chunk)
+        
+        # Note: user_id is optional - if not provided, nodes are shared across all users
+        # If user_id is provided, nodes are isolated per user
         
         # Extract nodes and edges with full context
         nodes, edges = await meetmap_service.extract_nodes(transcript_chunk)
@@ -147,13 +151,13 @@ async def get_influence(node_id: str):
 
 
 @app.get("/api/graph/state")
-async def get_graph_state():
-    """Get the complete graph state (all nodes and edges)"""
+async def get_graph_state(user_id: Optional[str] = Query(None, description="Filter nodes by user ID")):
+    """Get the complete graph state (all nodes and edges), optionally filtered by user_id"""
     try:
         graph_manager = meetmap_service.graph_manager
         
-        # Get all nodes and convert to frontend format
-        all_graph_nodes = graph_manager.get_all_nodes()
+        # Get all nodes filtered by user_id if provided
+        all_graph_nodes = graph_manager.get_all_nodes(user_id=user_id)
         
         # Convert to frontend format using the service's conversion method
         from models.schemas import NodeData, EdgeData
@@ -161,21 +165,22 @@ async def get_graph_state():
         nodes = []
         edges = []
         
-        # Include root node
-        root = graph_manager.get_root()
-        root_node_data = NodeData(
-            id=root.id,
-            text=root.summary,
-            type="idea",
-            timestamp=0.0,
-            confidence=1.0,
-            metadata={
-                "depth": 0,
-                "is_root": True,
-                **root.metadata
-            }
-        )
-        nodes.append(root_node_data)
+        # Include root node (user-specific if user_id provided)
+        root = graph_manager.get_root(user_id=user_id)
+        if root:
+            root_node_data = NodeData(
+                id=root.id,
+                text=root.summary,
+                type="idea",
+                timestamp=0.0,
+                confidence=1.0,
+                metadata={
+                    "depth": 0,
+                    "is_root": True,
+                    **root.metadata
+                }
+            )
+            nodes.append(root_node_data)
         
         # Convert all other nodes
         for graph_node in all_graph_nodes:

@@ -3,14 +3,15 @@ import NodeMap from './NodeMap'
 import { api } from '../services/api'
 import './Dashboard.css'
 
-export default function Dashboard() {
+export default function Dashboard({ userId }) {
   const [nodes, setNodes] = useState([])
   const [edges, setEdges] = useState([])
 
   // Fetch graph state from backend
   const fetchGraphState = async () => {
     try {
-      const response = await api.getGraphState()
+      // userId comes from parent component/service
+      const response = await api.getGraphState(userId)
       if (response.status === 'success') {
         console.log('Dashboard: Fetched graph state -', response.nodes?.length || 0, 'nodes,', response.edges?.length || 0, 'edges')
         setNodes(response.nodes || [])
@@ -28,6 +29,8 @@ export default function Dashboard() {
 
   // Poll for graph updates every 2 seconds
   useEffect(() => {
+    if (!userId) return // Don't fetch if no userId
+    
     // Initial fetch
     fetchGraphState()
     
@@ -35,7 +38,7 @@ export default function Dashboard() {
     const interval = setInterval(fetchGraphState, 2000)
     
     return () => clearInterval(interval)
-  }, [])
+  }, [userId])
 
   return (
     <div className="dashboard">

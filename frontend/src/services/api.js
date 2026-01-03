@@ -1,10 +1,13 @@
 import axios from 'axios'
 
-const API_BASE_URL = 'http://localhost:8001'
+// Use Railway URL in production, localhost for development
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://meetpmap-production.up.railway.app'
 
 export const api = {
-  async processTranscript(chunk) {
-    const response = await axios.post(`${API_BASE_URL}/api/transcript`, chunk)
+  async processTranscript(chunk, userId = null) {
+    // Add user_id to chunk if provided
+    const chunkWithUser = userId ? { ...chunk, user_id: userId } : chunk
+    const response = await axios.post(`${API_BASE_URL}/api/transcript`, chunkWithUser)
     return response.data
   },
 
@@ -33,8 +36,9 @@ export const api = {
     return response.data
   },
 
-  async getGraphState() {
-    const response = await axios.get(`${API_BASE_URL}/api/graph/state`)
+  async getGraphState(userId = null) {
+    const params = userId ? { user_id: userId } : {}
+    const response = await axios.get(`${API_BASE_URL}/api/graph/state`, { params })
     return response.data
   }
 }

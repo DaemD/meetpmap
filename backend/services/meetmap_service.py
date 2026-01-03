@@ -94,13 +94,14 @@ class MeetMapService:
             embed_elapsed = time.time() - embed_start
             print(f"[{time.strftime('%H:%M:%S')}]     Embedding generated in {embed_elapsed:.2f}s (embedding dim: {len(embedding)})")
             
-            # Global search for similar nodes
+            # Global search for similar nodes (filtered by user_id if provided)
             search_start = time.time()
             print(f"[{time.strftime('%H:%M:%S')}]     Searching for similar nodes in graph...")
             similar_nodes = self.graph_manager.find_globally_similar_nodes(
                 candidate_embedding=embedding,
                 exclude_node_id=None,
-                filter_by_threshold=False  # Get top-K regardless of threshold
+                filter_by_threshold=False,  # Get top-K regardless of threshold
+                user_id=chunk.user_id  # Filter by user_id
             )
             search_elapsed = time.time() - search_start
             print(f"[{time.strftime('%H:%M:%S')}]     Global search completed in {search_elapsed:.3f}s - found {len(similar_nodes)} similar node(s)")
@@ -120,9 +121,18 @@ class MeetMapService:
                     similar_nodes=similar_nodes
                 )
             else:
-                # No nodes in graph (only root exists) - place under root
-                parent_id = self.graph_manager.root_id
-                print(f"[{time.strftime('%H:%M:%S')}]     No existing nodes found, placing under root")
+                # No nodes in graph - place under user-specific root
+                if chunk.user_id:
+                    # Get or create user-specific root
+                    user_root = self.graph_manager.get_root(user_id=chunk.user_id)
+                    if not user_root:
+                        # Create user-specific root
+                        self.graph_manager._initialize_root(user_id=chunk.user_id)
+                        user_root = self.graph_manager.get_root(user_id=chunk.user_id)
+                    parent_id = user_root.id if user_root else self.graph_manager.root_id
+                else:
+                    parent_id = self.graph_manager.root_id
+                print(f"[{time.strftime('%H:%M:%S')}]     No existing nodes found, placing under root: {parent_id}")
             llm_elapsed = time.time() - llm_start
             print(f"[{time.strftime('%H:%M:%S')}]     Placement decision completed in {llm_elapsed:.2f}s - placing under {parent_id}")
             
@@ -131,17 +141,22 @@ class MeetMapService:
             self.node_counter += 1
             node_id = f"node_{self.node_counter}"
             
+            # Include user_id in metadata if provided
+            node_metadata = {
+                "chunk_id": chunk.chunk_id,
+                "timestamp": chunk.start,
+                "end_time": chunk.end,
+                "speaker": chunk.speaker
+            }
+            if chunk.user_id:
+                node_metadata["user_id"] = chunk.user_id
+            
             graph_node = self.graph_manager.add_node(
                 node_id=node_id,
                 embedding=embedding,
                 summary=idea_text,
                 parent_id=parent_id,
-                metadata={
-                    "chunk_id": chunk.chunk_id,
-                    "timestamp": chunk.start,
-                    "end_time": chunk.end,
-                    "speaker": chunk.speaker
-                }
+                metadata=node_metadata
             )
             place_elapsed = time.time() - place_start
             print(f"[{time.strftime('%H:%M:%S')}]     Node placement completed in {place_elapsed:.3f}s")

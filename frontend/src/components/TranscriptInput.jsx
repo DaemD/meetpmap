@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { api } from '../services/api'
 import './TranscriptInput.css'
 
-export default function TranscriptInput({ onNodesReceived }) {
+export default function TranscriptInput({ onNodesReceived, userId }) {
   const [text, setText] = useState('')
   const [startTime, setStartTime] = useState(0)
   const [endTime, setEndTime] = useState(5) // Default 5 seconds duration
@@ -32,8 +32,9 @@ export default function TranscriptInput({ onNodesReceived }) {
     }
 
     try {
+      // userId comes from parent component/service (passed as prop)
       // Send to backend via HTTP
-      const response = await api.processTranscript(chunk)
+      const response = await api.processTranscript(chunk, userId)
       
       if (response.status === 'error') {
         alert(`Error: ${response.message}`)

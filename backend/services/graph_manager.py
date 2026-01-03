@@ -45,13 +45,20 @@ class GraphManager:
         
         self._initialize_root()
     
-    def _initialize_root(self):
-        """Create root node at graph initialization"""
-        root_id = "root"
+    def _initialize_root(self, user_id: Optional[str] = None):
+        """Create root node at graph initialization, optionally for a specific user"""
+        if user_id:
+            root_id = f"root_{user_id}"
+        else:
+            root_id = "root"
         
         # Create a generic placeholder embedding (zero vector or small random)
         # In practice, this could be a generic "meeting start" embedding
         placeholder_embedding = [0.0] * 384  # Default size for all-MiniLM-L6-v2
+        
+        root_metadata = {"is_root": True}
+        if user_id:
+            root_metadata["user_id"] = user_id
         
         root_node = GraphNode(
             id=root_id,
@@ -61,20 +68,28 @@ class GraphManager:
             children_ids=[],
             depth=0,
             last_updated=time.time(),
-            metadata={"is_root": True}
+            metadata=root_metadata
         )
         
         self.nodes[root_id] = root_node
-        self.root_id = root_id
-        print(f"🌳 Graph initialized with root node: {root_id}")
+        if not user_id:
+            self.root_id = root_id
+        print(f"🌳 Graph initialized with root node: {root_id}" + (f" (user: {user_id})" if user_id else ""))
     
     def get_node(self, node_id: str) -> Optional[GraphNode]:
         """Get node by ID"""
         return self.nodes.get(node_id)
     
-    def get_root(self) -> GraphNode:
-        """Get root node"""
-        return self.nodes[self.root_id]
+    def get_root(self, user_id: Optional[str] = None) -> Optional[GraphNode]:
+        """Get root node, optionally for a specific user"""
+        if user_id is None:
+            return self.nodes.get(self.root_id)
+        # For user-specific root, check if root has user_id or create user-specific root
+        root = self.nodes.get(self.root_id)
+        if root and root.metadata.get("user_id") == user_id:
+            return root
+        # If no user-specific root exists, return None (will be created on first node)
+        return None
     
     def get_children(self, node_id: str) -> List[GraphNode]:
         """Get all children of a node"""
@@ -270,13 +285,23 @@ class GraphManager:
         is_match = best_similarity >= threshold
         return best_id, best_similarity, is_match
     
-    def get_all_nodes(self) -> List[GraphNode]:
-        """Get all nodes in the graph"""
-        return list(self.nodes.values())
+    def get_all_nodes(self, user_id: Optional[str] = None) -> List[GraphNode]:
+        """Get all nodes in the graph, optionally filtered by user_id"""
+        if user_id is None:
+            return list(self.nodes.values())
+        # Filter nodes by user_id in metadata
+        return [node for node in self.nodes.values() 
+                if node.metadata.get("user_id") == user_id or 
+                (node.id == self.root_id and node.metadata.get("user_id") == user_id) or
+                (node.id == self.root_id and user_id is None)]
     
-    def get_all_nodes_except_root(self) -> List[GraphNode]:
-        """Get all nodes except root (for global search)"""
-        return [node for node in self.nodes.values() if node.id != self.root_id]
+    def get_all_nodes_except_root(self, user_id: Optional[str] = None) -> List[GraphNode]:
+        """Get all nodes except root (for global search), optionally filtered by user_id"""
+        if user_id is None:
+            return [node for node in self.nodes.values() if node.id != self.root_id]
+        # Filter nodes by user_id, excluding root
+        return [node for node in self.nodes.values() 
+                if node.id != self.root_id and node.metadata.get("user_id") == user_id]
     
     def get_all_edges(self) -> List[dict]:
         """
@@ -365,7 +390,8 @@ class GraphManager:
         self,
         candidate_embedding: List[float],
         exclude_node_id: Optional[str] = None,
-        filter_by_threshold: bool = False
+        filter_by_threshold: bool = False,
+        user_id: Optional[str] = None
     ) -> List[tuple[str, float, GraphNode]]:
         """
         Find top-K most similar nodes in entire graph
@@ -374,11 +400,12 @@ class GraphManager:
             candidate_embedding: Embedding to compare against
             exclude_node_id: Node ID to exclude from search
             filter_by_threshold: If True, only return nodes >= SIMILARITY_THRESHOLD
+            user_id: Optional user ID to filter nodes by user
         
         Returns:
             List of (node_id, similarity, node) tuples, sorted by similarity descending
         """
-        all_nodes = self.get_all_nodes_except_root()
+        all_nodes = self.get_all_nodes_except_root(user_id=user_id)
         if exclude_node_id:
             all_nodes = [n for n in all_nodes if n.id != exclude_node_id]
         
