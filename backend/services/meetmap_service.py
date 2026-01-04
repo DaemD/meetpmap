@@ -587,3 +587,56 @@ Return ONLY the JSON object, no other text."""
                 for depth in range(max([n.depth for n in all_nodes]) + 1) if all_nodes
             }
         }
+    
+    async def generate_node_summary(self, conversation_text: str) -> str:
+        """
+        Generate a detailed conversation summary with important entities in bold markdown format
+        
+        Args:
+            conversation_text: Aggregated text from all nodes in the path
+            
+        Returns:
+            Summary string with important entities wrapped in **bold** markdown
+        """
+        prompt = f"""You are analyzing a conversation that has progressed through these ideas:
+
+{conversation_text}
+
+Generate a detailed, flowing summary of the entire conversation up to this point.
+Make it read like a natural narrative of what was discussed.
+
+IMPORTANT: In your response, wrap important entities in **double asterisks** for bold formatting.
+Important entities include:
+- Names of people, companies, products
+- Numbers, amounts, dates, deadlines
+- Key concepts, decisions, actions
+- Important keywords and terms
+
+Example format:
+"The conversation started with **John** discussing the **$50,000 budget**. 
+The team decided to focus on **marketing** and **user acquisition**. 
+They set a deadline of **next week**."
+
+Return ONLY the summary text with bold entities using **double asterisks**, no other formatting or explanations."""
+
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert at summarizing conversations and highlighting important entities. Return only the summary text with bold markdown formatting."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=500
+            )
+            
+            summary = response.choices[0].message.content.strip()
+            return summary
+            
+        except Exception as e:
+            print(f"[ERROR] Error generating node summary: {e}")
+            # Fallback: return simple aggregated text
+            return conversation_text

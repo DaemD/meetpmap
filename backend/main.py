@@ -380,6 +380,81 @@ async def get_influence(node_id: str, user_id: str = Query(..., description="Use
         )
 
 
+@app.get("/api/graph/node/{node_id}/summary")
+async def get_node_summary(
+    node_id: str, 
+    user_id: str = Query(..., description="User ID (required)")
+):
+    """Get detailed conversation summary up to this node with important entities in bold"""
+    try:
+        if not node_id or not node_id.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "node_id is required"}
+            )
+        
+        graph_manager = meetmap_service.graph_manager
+        
+        # Get path from root to this node
+        path_result = await graph_manager.get_path_to_root(node_id, user_id)
+        path = path_result.get("path", [])
+        
+        if not path:
+            return JSONResponse(
+                status_code=404,
+                content={"status": "error", "message": f"Path not found for node: {node_id}"}
+            )
+        
+        # Get all nodes in the path (in order from root to target)
+        nodes_in_path = []
+        for path_node_id in path:
+            node = await graph_manager.get_node(path_node_id, user_id)
+            if node:
+                nodes_in_path.append(node)
+        
+        if not nodes_in_path:
+            return JSONResponse(
+                status_code=404,
+                content={"status": "error", "message": f"Nodes in path not found"}
+            )
+        
+        # Aggregate conversation text from all nodes in path
+        conversation_parts = []
+        for node in nodes_in_path:
+            if node.summary and node.summary.strip() and not node.metadata.get("is_root"):
+                conversation_parts.append(node.summary)
+        
+        if not conversation_parts:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "summary": "No conversation content available for this path.",
+                    "node_id": node_id
+                }
+            )
+        
+        conversation_text = "\n".join(conversation_parts)
+        
+        # Generate summary with bold entities using LLM
+        summary = await meetmap_service.generate_node_summary(conversation_text)
+        
+        return {
+            "status": "success",
+            "summary": summary,
+            "node_id": node_id
+        }
+        
+    except Exception as e:
+        print(f"[ERROR] Error generating node summary: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
 @app.get("/api/graph/state")
 async def get_graph_state(user_id: str = Query(..., description="User ID (required)")):
     """Get the complete graph state (all nodes and edges) for a user"""

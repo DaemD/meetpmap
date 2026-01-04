@@ -42,7 +42,7 @@ export default function Dashboard({ userId }) {
 
   return (
     <div className="dashboard">
-      <NodeMap nodes={nodes} edges={edges} />
+      <NodeMap nodes={nodes} edges={edges} userId={userId} />
     </div>
   )
 }
