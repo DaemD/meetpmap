@@ -176,6 +176,7 @@ const getLayoutedElements = (nodes, edges, userModifiedNodes = new Set(), direct
 
 export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId }) {
   const [nodes, setNodes, onNodesChange] = useNodesState([])
+  const [hoveredNodeId, setHoveredNodeId] = useState(null) // For visual effects (enlarge, dim)
   const [clickedNodeId, setClickedNodeId] = useState(null) // Track clicked node for summary bubble
   const [clickedNodePosition, setClickedNodePosition] = useState(null)
   const [userModifiedNodes, setUserModifiedNodes] = useState(new Set()) // Track nodes user has manually moved
