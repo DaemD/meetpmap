@@ -109,10 +109,16 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
 
   // Simple layout: root at center, children positioned in a circle around parent
   const calculateLayout = useCallback((nodesData, edgesData) => {
-    if (!nodesData || nodesData.length === 0) return []
+    if (!nodesData || nodesData.length === 0) {
+      console.log('NodeMap: No nodes data for layout')
+      return new Map()
+    }
+
+    console.log('NodeMap: Calculating layout for', nodesData.length, 'nodes,', edgesData.length, 'edges')
 
     // Find root node
     const rootNode = nodesData.find(n => n.id === 'root' || n.id.startsWith('root_') || n.metadata?.is_root)
+    console.log('NodeMap: Root node found:', rootNode?.id)
     
     // Center position (middle of viewport)
     const centerX = 500
@@ -123,11 +129,14 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
     edgesData.forEach(edge => {
       const parent = edge.from_node || edge.source
       const child = edge.to_node || edge.target
-      if (!childrenMap.has(parent)) {
-        childrenMap.set(parent, [])
+      if (parent && child) {
+        if (!childrenMap.has(parent)) {
+          childrenMap.set(parent, [])
+        }
+        childrenMap.get(parent).push(child)
       }
-      childrenMap.get(parent).push(child)
     })
+    console.log('NodeMap: Children map:', Array.from(childrenMap.entries()).map(([p, c]) => `${p}: [${c.join(', ')}]`))
 
     // Calculate positions using simple hierarchical layout
     const positions = new Map()
@@ -137,6 +146,7 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
     if (rootNode) {
       positions.set(rootNode.id, { x: centerX, y: centerY })
       visited.add(rootNode.id)
+      console.log('NodeMap: Positioned root at center:', rootNode.id)
     }
 
     // Position children in levels
@@ -147,11 +157,13 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
       
       if (parentId && positions.has(parentId)) {
         const parentPos = positions.get(parentId)
-        const angle = (indexInLevel / (childrenMap.get(parentId)?.length || 1)) * Math.PI * 2
+        const siblings = childrenMap.get(parentId) || []
+        const angle = siblings.length > 1 ? (indexInLevel / siblings.length) * Math.PI * 2 : 0
         const radius = 250 + (level * 150) // Increase radius for deeper levels
         const x = parentPos.x + Math.cos(angle) * radius
         const y = parentPos.y + Math.sin(angle) * radius
         positions.set(nodeId, { x, y })
+        console.log(`NodeMap: Positioned ${nodeId} at (${x.toFixed(0)}, ${y.toFixed(0)}) - parent: ${parentId}, level: ${level}`)
       } else {
         // Fallback: position relative to center
         const angle = (indexInLevel / nodesData.length) * Math.PI * 2
@@ -160,6 +172,7 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
           x: centerX + Math.cos(angle) * radius,
           y: centerY + Math.sin(angle) * radius
         })
+        console.log(`NodeMap: Positioned ${nodeId} at fallback position (${positions.get(nodeId).x.toFixed(0)}, ${positions.get(nodeId).y.toFixed(0)})`)
       }
 
       // Position children
@@ -169,21 +182,33 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
       })
     }
 
-    // Position all nodes
+    // Position all nodes starting from root
+    if (rootNode) {
+      const rootChildren = childrenMap.get(rootNode.id) || []
+      rootChildren.forEach((childId, index) => {
+        positionNode(childId, rootNode.id, 1, index)
+      })
+    }
+
+    // Position any remaining unvisited nodes
     nodesData.forEach((node, index) => {
       if (!visited.has(node.id)) {
-        const parentId = edgesData.find(e => (e.to_node || e.target) === node.id)?.from_node || 
-                         edgesData.find(e => (e.to_node || e.target) === node.id)?.source
+        const parentEdge = edgesData.find(e => (e.to_node || e.target) === node.id)
+        const parentId = parentEdge ? (parentEdge.from_node || parentEdge.source) : null
         positionNode(node.id, parentId, 0, index)
       }
     })
 
+    console.log('NodeMap: Layout complete, positioned', positions.size, 'nodes')
     return positions
   }, [])
 
   // Convert nodeData to ReactFlow format
   useEffect(() => {
+    console.log('NodeMap: useEffect triggered - nodeData:', nodeData?.length, 'edges:', edgeData?.length)
+    
     if (!nodeData || nodeData.length === 0) {
+      console.log('NodeMap: No node data, clearing nodes')
       setNodes([])
       previousNodeCountRef.current = 0
       return
@@ -191,11 +216,13 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
 
     // Calculate positions
     const positions = calculateLayout(nodeData, edgeData)
+    console.log('NodeMap: Got positions for', positions.size, 'nodes')
 
     // Convert to ReactFlow nodes
     const flowNodes = nodeData.map(node => {
       const position = positions.get(node.id) || { x: 500, y: 400 }
       const existingNode = nodes.find(n => n.id === node.id)
+      console.log(`NodeMap: Converting node ${node.id} - position:`, position, 'existing:', !!existingNode)
 
       return {
         id: node.id,
@@ -219,6 +246,8 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
       }
     })
 
+    console.log('NodeMap: Setting', flowNodes.length, 'flow nodes')
+    console.log('NodeMap: Flow nodes sample:', flowNodes.slice(0, 2).map(n => ({ id: n.id, pos: n.position, label: n.data.label })))
     setNodes(flowNodes)
 
     // Auto-center when new nodes are added
@@ -226,6 +255,7 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
     const previousNodeCount = previousNodeCountRef.current
 
     if (currentNodeCount > previousNodeCount && reactFlowInstance.current) {
+      console.log('NodeMap: New nodes detected, auto-centering')
       setTimeout(() => {
         if (reactFlowInstance.current) {
           reactFlowInstance.current.fitView({ 
