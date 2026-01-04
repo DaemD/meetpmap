@@ -233,14 +233,17 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
   }, [])
   
   
-  // Handle recentre button click
+  // Handle recentre button click - improved centering
   const handleRecentre = useCallback(() => {
-    if (reactFlowInstance.current) {
+    if (reactFlowInstance.current && nodes.length > 0) {
       isAutoFittingRef.current = true
       
+      // Use fitView with improved parameters for better centering
       reactFlowInstance.current.fitView({ 
-        padding: 0.2, 
-        duration: 400
+        padding: 0.15, // Tighter padding for better view of graph
+        duration: 500, // Smooth animation
+        minZoom: 0.3,  // Don't zoom out too much
+        maxZoom: 1.2   // Don't zoom in too much
       })
       
       setTimeout(() => {
@@ -255,9 +258,9 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
           setHasDeviated(false) // Reset deviation state
         }
         isAutoFittingRef.current = false
-      }, 500)
+      }, 600) // Slightly longer timeout for smoother transition
     }
-  }, [])
+  }, [nodes])
   
   const reactFlowEdges = useMemo(() => {
     console.log('NodeMap: Creating React Flow edges from', edgeData.length, 'edges')
@@ -369,13 +372,16 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
       const previousNodeCount = previousNodeCountRef.current
       
       if (currentNodeCount > previousNodeCount && reactFlowInstance.current) {
-        // New nodes were added - auto-center
+        // New nodes were added - auto-center with improved logic
         isAutoFittingRef.current = true
         setTimeout(() => {
           if (reactFlowInstance.current) {
+            // Use improved fitView with better parameters
             reactFlowInstance.current.fitView({ 
-              padding: 0.2, 
-              duration: 400
+              padding: 0.15, // Tighter padding for better view
+              duration: 500, // Slightly longer for smoother animation
+              minZoom: 0.3,  // Don't zoom out too much
+              maxZoom: 1.2   // Don't zoom in too much
             })
             // Update initial viewport after auto-fit
             setTimeout(() => {
@@ -389,9 +395,9 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
                 setHasDeviated(false) // Reset deviation after auto-centering new nodes
               }
               isAutoFittingRef.current = false
-            }, 500)
+            }, 600)
           }
-        }, 100)
+        }, 150) // Slightly longer delay to ensure layout is complete
       }
       
       // Update previous node count
@@ -431,13 +437,15 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
       const previousNodeCount = previousNodeCountRef.current
       
       if (currentNodeCount > previousNodeCount && reactFlowInstance.current) {
-        // New nodes were added - auto-center
+        // New nodes were added - auto-center with improved logic
         isAutoFittingRef.current = true
         setTimeout(() => {
           if (reactFlowInstance.current) {
             reactFlowInstance.current.fitView({ 
-              padding: 0.2, 
-              duration: 400
+              padding: 0.15,
+              duration: 500,
+              minZoom: 0.3,
+              maxZoom: 1.2
             })
             setTimeout(() => {
               const viewport = reactFlowInstance.current?.getViewport()
@@ -450,17 +458,19 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
                 setHasDeviated(false)
               }
               isAutoFittingRef.current = false
-            }, 500)
+            }, 600)
           }
-        }, 100)
+        }, 150)
       } else if (previousNodeCount === 0 && currentNodeCount > 0 && reactFlowInstance.current) {
         // First time nodes appear - also auto-center and set initial viewport
         isAutoFittingRef.current = true
         setTimeout(() => {
           if (reactFlowInstance.current) {
             reactFlowInstance.current.fitView({ 
-              padding: 0.2, 
-              duration: 400
+              padding: 0.15,
+              duration: 500,
+              minZoom: 0.3,
+              maxZoom: 1.2
             })
             setTimeout(() => {
               const viewport = reactFlowInstance.current?.getViewport()
@@ -473,9 +483,9 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
                 setHasDeviated(false)
               }
               isAutoFittingRef.current = false
-            }, 500)
+            }, 600)
           }
-        }, 100)
+        }, 150)
       }
       
       // Update previous node count
