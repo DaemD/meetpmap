@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import os
 import time
 from typing import Optional
+from contextlib import asynccontextmanager
 
 from services.meetmap_service import MeetMapService
 from services.database import db
@@ -19,9 +20,58 @@ from models.schemas import TranscriptChunk
 load_dotenv()
 
 app_start = time.time()
-print(f"\n[{time.strftime('%H:%M:%S')}] 🚀 Starting MeetMap Backend...")
+print(f"\n[{time.strftime('%H:%M:%S')}] [*] Starting MeetMap Backend...")
 
-app = FastAPI(title="MeetMap Prototype API")
+# Database lifecycle events using lifespan (modern FastAPI approach)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage database connection lifecycle"""
+    # Startup
+    try:
+        print(f"[{time.strftime('%H:%M:%S')}] [*] Connecting to database...")
+        await db.connect()
+        print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Database connected")
+        
+        # Run migration automatically (creates tables if they don't exist)
+        # This is safe because schema.sql uses "CREATE TABLE IF NOT EXISTS"
+        try:
+            from pathlib import Path
+            schema_file = Path(__file__).parent / "database" / "schema.sql"
+            if schema_file.exists():
+                print(f"[{time.strftime('%H:%M:%S')}] [*] Running database migration...")
+                with open(schema_file, 'r', encoding='utf-8') as f:
+                    schema_sql = f.read()
+                await db.execute(schema_sql)
+                
+                # Verify tables
+                tables = await db.fetch("""
+                    SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public'
+                    ORDER BY table_name
+                """)
+                print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Database ready - {len(tables)} tables found")
+            else:
+                print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Schema file not found, skipping migration")
+        except Exception as migration_error:
+            print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Migration error (tables may already exist): {migration_error}")
+            # Continue anyway - tables might already exist
+            
+    except Exception as e:
+        print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Database connection failed: {e}")
+        print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Application requires database - some features may not work")
+        # Don't raise - let app start but log the error clearly
+    
+    yield  # Application runs here
+    
+    # Shutdown
+    try:
+        await db.close()
+        print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Database connection closed")
+    except Exception as e:
+        print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Error closing database: {e}")
+
+app = FastAPI(title="MeetMap Prototype API", lifespan=lifespan)
 
 # CORS middleware
 cors_start = time.time()
@@ -44,66 +94,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 cors_elapsed = time.time() - cors_start
-print(f"[{time.strftime('%H:%M:%S')}] ✅ CORS middleware configured ({cors_elapsed:.3f}s)")
+print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] CORS middleware configured ({cors_elapsed:.3f}s)")
 
 # Initialize services
 service_start = time.time()
-print(f"[{time.strftime('%H:%M:%S')}] 📦 Initializing MeetMapService...")
+print(f"[{time.strftime('%H:%M:%S')}] [*] Initializing MeetMapService...")
 meetmap_service = MeetMapService()
 service_elapsed = time.time() - service_start
-print(f"[{time.strftime('%H:%M:%S')}] ✅ MeetMapService initialization complete ({service_elapsed:.2f}s)")
+print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] MeetMapService initialization complete ({service_elapsed:.2f}s)")
 
 app_elapsed = time.time() - app_start
-print(f"[{time.strftime('%H:%M:%S')}] 🎉 Backend initialization complete! (Total: {app_elapsed:.2f}s)\n")
-
-
-# Database lifecycle events
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database connection on startup and run migration if needed"""
-    try:
-        print(f"[{time.strftime('%H:%M:%S')}] 🔌 Connecting to database...")
-        await db.connect()
-        print(f"[{time.strftime('%H:%M:%S')}] ✅ Database connected")
-        
-        # Run migration automatically (creates tables if they don't exist)
-        # This is safe because schema.sql uses "CREATE TABLE IF NOT EXISTS"
-        try:
-            from pathlib import Path
-            schema_file = Path(__file__).parent / "database" / "schema.sql"
-            if schema_file.exists():
-                print(f"[{time.strftime('%H:%M:%S')}] 📦 Running database migration...")
-                with open(schema_file, 'r', encoding='utf-8') as f:
-                    schema_sql = f.read()
-                await db.execute(schema_sql)
-                
-                # Verify tables
-                tables = await db.fetch("""
-                    SELECT table_name 
-                    FROM information_schema.tables 
-                    WHERE table_schema = 'public'
-                    ORDER BY table_name
-                """)
-                print(f"[{time.strftime('%H:%M:%S')}] ✅ Database ready - {len(tables)} tables found")
-            else:
-                print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Schema file not found, skipping migration")
-        except Exception as migration_error:
-            print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Migration error (tables may already exist): {migration_error}")
-            # Continue anyway - tables might already exist
-            
-    except Exception as e:
-        print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Database connection failed: {e}")
-        print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Continuing without database (will use in-memory storage)")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Close database connection on shutdown"""
-    try:
-        await db.close()
-        print(f"[{time.strftime('%H:%M:%S')}] ✅ Database connection closed")
-    except Exception as e:
-        print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Error closing database: {e}")
+print(f"[{time.strftime('%H:%M:%S')}] [*] Backend initialization complete! (Total: {app_elapsed:.2f}s)\n")
 
 
 @app.get("/")
