@@ -10,7 +10,9 @@ export default function NodeHoverBubble({ nodeId, userId, nodePosition, reactFlo
 
   // Fetch summary when component mounts
   useEffect(() => {
+    console.log('[BUBBLE] Component mounted/updated:', { nodeId, userId })
     if (!nodeId || !userId || nodeId.startsWith('root')) {
+      console.log('[BUBBLE] Skipping fetch - invalid params')
       setLoading(false)
       return
     }
@@ -19,19 +21,24 @@ export default function NodeHoverBubble({ nodeId, userId, nodePosition, reactFlo
 
     const fetchSummary = async () => {
       try {
+        console.log('[BUBBLE] Fetching summary for node:', nodeId, 'user:', userId)
         setLoading(true)
         setError(null)
         const response = await api.getNodeSummary(nodeId, userId)
+        console.log('[BUBBLE] Summary response:', response)
         
         if (!cancelled) {
           if (response.status === 'success') {
             setSummary(response.summary)
+            console.log('[BUBBLE] Summary received:', response.summary)
           } else {
             setError(response.message || 'Failed to load summary')
+            console.log('[BUBBLE] Error in response:', response.message)
           }
           setLoading(false)
         }
       } catch (err) {
+        console.error('[BUBBLE] Error fetching summary:', err)
         if (!cancelled) {
           setError('Unable to load summary')
           setLoading(false)

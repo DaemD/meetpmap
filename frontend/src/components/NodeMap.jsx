@@ -606,6 +606,7 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
           }}
           onNodeDragStop={onNodeDragStop}
           onNodeMouseEnter={(event, node) => {
+            console.log('[HOVER] Mouse entered node:', node.id)
             // Clear any existing timeout
             if (hoverTimeoutRef.current) {
               clearTimeout(hoverTimeoutRef.current)
@@ -613,11 +614,14 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
             
             // Skip root nodes
             if (node.id.startsWith('root') || node.id === 'root') {
+              console.log('[HOVER] Skipping root node')
               return
             }
             
+            console.log('[HOVER] Setting timeout for node:', node.id)
             // Add delay to prevent flicker (300ms)
             hoverTimeoutRef.current = setTimeout(() => {
+              console.log('[HOVER] Timeout fired, setting hovered node:', node.id)
               setHoveredNodeId(node.id)
               // Get node's screen position from the event target
               const nodeElement = event.currentTarget
@@ -626,14 +630,17 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
                 // Center of the node
                 const screenX = rect.left + rect.width / 2
                 const screenY = rect.top + rect.height / 2
+                console.log('[HOVER] Node screen position:', { x: screenX, y: screenY })
                 setHoveredNodePosition({ x: screenX, y: screenY })
               } else {
+                console.log('[HOVER] No node element, using graph position')
                 // Fallback: use graph coordinates
                 setHoveredNodePosition(node.position)
               }
             }, 300)
           }}
           onNodeMouseLeave={() => {
+            console.log('[HOVER] Mouse left node')
             // Clear timeout if user moves away quickly
             if (hoverTimeoutRef.current) {
               clearTimeout(hoverTimeoutRef.current)
@@ -683,14 +690,20 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
           )}
         </ReactFlow>
         {/* Node hover bubble - rendered outside ReactFlow to not affect layout */}
-        {hoveredNodeId && hoveredNodePosition && userId && !hoveredNodeId.startsWith('root') && (
-          <NodeHoverBubble
-            nodeId={hoveredNodeId}
-            userId={userId}
-            nodePosition={hoveredNodePosition}
-            reactFlowInstance={reactFlowInstance.current}
-          />
-        )}
+        {(() => {
+          if (hoveredNodeId && hoveredNodePosition && userId && !hoveredNodeId.startsWith('root')) {
+            console.log('[BUBBLE] Rendering bubble for node:', hoveredNodeId, 'position:', hoveredNodePosition, 'userId:', userId)
+            return (
+              <NodeHoverBubble
+                nodeId={hoveredNodeId}
+                userId={userId}
+                nodePosition={hoveredNodePosition}
+                reactFlowInstance={reactFlowInstance.current}
+              />
+            )
+          }
+          return null
+        })()}
       )}
     </div>
   )
