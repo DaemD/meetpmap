@@ -106,6 +106,7 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
   const [hoverTimeout, setHoverTimeout] = useState(null)
   const reactFlowInstance = useRef(null)
   const previousNodeCountRef = useRef(0)
+  const userModifiedNodes = useRef(new Set()) // Track nodes user has manually dragged
 
   // Debug: Log what we receive as props
   useEffect(() => {
@@ -227,14 +228,19 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
 
     // Convert to ReactFlow nodes
     const flowNodes = nodeData.map(node => {
-      const position = positions.get(node.id) || { x: 500, y: 400 }
+      const calculatedPosition = positions.get(node.id) || { x: 500, y: 400 }
       const existingNode = nodes.find(n => n.id === node.id)
-      console.log(`NodeMap: Converting node ${node.id} - position:`, position, 'existing:', !!existingNode)
+      const isUserModified = userModifiedNodes.current.has(node.id)
+      
+      // Only preserve position if user has manually dragged this node
+      const finalPosition = (isUserModified && existingNode?.position) || calculatedPosition
+      
+      console.log(`NodeMap: Converting node ${node.id} - calculated:`, calculatedPosition, 'userModified:', isUserModified, 'final:', finalPosition)
 
       return {
         id: node.id,
         type: node.type || 'idea',
-        position: existingNode?.position || position, // Preserve user-modified positions
+        position: finalPosition,
         data: {
           label: node.text || '',
           timestamp: node.timestamp,
@@ -356,6 +362,11 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
             setTimeout(() => {
               instance.fitView({ padding: 0.2, duration: 400 })
             }, 100)
+          }}
+          onNodeDragStop={(event, node) => {
+            // Mark node as user-modified when dragged
+            userModifiedNodes.current.add(node.id)
+            console.log('NodeMap: User dragged node', node.id, 'to position', node.position)
           }}
           onNodeMouseEnter={handleNodeMouseEnter}
           onNodeMouseLeave={handleNodeMouseLeave}
