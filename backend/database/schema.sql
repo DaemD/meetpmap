@@ -71,12 +71,13 @@ CREATE INDEX IF NOT EXISTS idx_graph_edges_to_node ON graph_edges(to_node);
 -- Clusters table
 -- Stores cluster information (centroids, colors)
 CREATE TABLE IF NOT EXISTS clusters (
-    cluster_id SERIAL PRIMARY KEY,
+    cluster_id INTEGER NOT NULL,
     user_id VARCHAR(255) NOT NULL,
     centroid JSONB NOT NULL,  -- Store as JSON array of floats
     color VARCHAR(7),  -- Hex color code
     created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    updated_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (cluster_id, user_id)
 );
 
 -- Index for clusters

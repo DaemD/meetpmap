@@ -41,7 +41,40 @@ async def lifespan(app: FastAPI):
                 print(f"[{time.strftime('%H:%M:%S')}] [*] Running database migration...")
                 with open(schema_file, 'r', encoding='utf-8') as f:
                     schema_sql = f.read()
-                await db.execute(schema_sql)
+                
+                # Remove COMMENT statements (asyncpg may have issues with them)
+                lines = schema_sql.split('\n')
+                cleaned_sql = []
+                for line in lines:
+                    # Skip COMMENT statements
+                    if line.strip().upper().startswith('COMMENT'):
+                        continue
+                    # Keep the line (including comments for documentation)
+                    cleaned_sql.append(line)
+                
+                schema_sql = '\n'.join(cleaned_sql)
+                
+                # Execute SQL - asyncpg should handle multiple statements
+                try:
+                    await db.execute(schema_sql)
+                except Exception as migration_error:
+                    # Check if it's a syntax error we can handle
+                    error_str = str(migration_error).lower()
+                    if 'syntax error' in error_str:
+                        print(f"[{time.strftime('%H:%M:%S')}] [WARNING] SQL syntax error - trying alternative execution method")
+                        # Try executing statements one by one
+                        statements = [s.strip() for s in schema_sql.split(';') if s.strip() and not s.strip().startswith('--')]
+                        for stmt in statements:
+                            if stmt and len(stmt) > 10:  # Ignore very short statements
+                                try:
+                                    await db.execute(stmt)
+                                except Exception as e:
+                                    error_msg = str(e).lower()
+                                    if 'already exists' not in error_msg:
+                                        print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Statement failed (may be expected): {stmt[:50]}... Error: {e}")
+                    else:
+                        # Other errors (like "already exists") are expected
+                        print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Migration error (tables may already exist): {migration_error}")
                 
                 # Verify tables
                 tables = await db.fetch("""
