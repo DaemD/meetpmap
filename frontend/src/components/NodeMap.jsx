@@ -188,6 +188,7 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
   const initialViewportRef = useRef(null) // Store initial viewport (x, y, zoom) to detect deviation
   const previousNodeCountRef = useRef(0) // Track previous node count to detect new nodes
   const nodesRef = useRef([]) // Ref to store current nodes for layout effect
+  const previousNodeIdsRef = useRef(new Set()) // Track previous node IDs to detect actual changes
   
   // Handle node drag end - mark node as user-modified
   const onNodeDragStop = useCallback((event, node) => {
@@ -304,11 +305,32 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
   const [edges, setEdges, onEdgesChange] = useEdgesState(reactFlowEdges)
 
   // Convert nodeData to ReactFlow format and apply dagre layout
+  // Only recalculate when nodes/edges actually change (not just new array references)
   useEffect(() => {
     if (!nodeData || nodeData.length === 0) {
       previousNodeCountRef.current = 0
       return
     }
+    
+    // Check if nodes actually changed by comparing IDs
+    const currentNodeIds = new Set(nodeData.map(n => n.id))
+    const previousNodeIds = previousNodeIdsRef.current
+    
+    // Check if node count or IDs changed
+    const nodeCountChanged = nodeData.length !== previousNodeCountRef.current
+    const nodeIdsChanged = currentNodeIds.size !== previousNodeIds.size || 
+                          [...currentNodeIds].some(id => !previousNodeIds.has(id)) ||
+                          [...previousNodeIds].some(id => !currentNodeIds.has(id))
+    
+    // Only recalculate layout if nodes actually changed
+    if (!nodeCountChanged && !nodeIdsChanged && nodesRef.current.length > 0) {
+      // Nodes haven't changed, skip layout recalculation
+      console.log('NodeMap: Nodes unchanged, skipping layout recalculation')
+      return
+    }
+    
+    // Update previous node IDs
+    previousNodeIdsRef.current = new Set(currentNodeIds)
     
     console.log('NodeMap: Applying layout -', nodeData.length, 'nodes,', reactFlowEdges.length, 'edges')
     
@@ -494,7 +516,11 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
   
   // Update node styles based on hover state (simplified - just dim non-hovered nodes)
   // This effect runs independently and preserves node positions
+  // CRITICAL: This should NOT trigger layout recalculation
   useEffect(() => {
+    // Only update if there are nodes and hover state changed
+    if (nodes.length === 0) return
+    
     setNodes((nds) => {
       if (nds.length === 0) return nds
       
@@ -504,15 +530,27 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
         const isHovered = currentHoveredId === node.id
         const shouldDim = currentHoveredId !== null && !isHovered
 
+        // Check if style actually needs updating (avoid unnecessary updates)
+        const currentOpacity = node.style?.opacity ?? 1
+        const targetOpacity = shouldDim ? 0.4 : 1
+        const currentTransform = node.style?.transform
+        const targetTransform = isHovered ? 'scale(1.1)' : 'scale(1)'
+        
+        // Skip update if styles are already correct
+        if (currentOpacity === targetOpacity && currentTransform === targetTransform && 
+            node.data?.isHovered === isHovered) {
+          return node
+        }
+
         return {
           ...node,
           // CRITICAL: Preserve position exactly to prevent layout recalculation
-          position: node.position,
+          position: { ...node.position }, // Create new object to ensure reference stability
           // Preserve all existing properties, only update opacity, scale, and hover state
           style: {
             ...node.style,
-            opacity: shouldDim ? 0.4 : 1,
-            transform: isHovered ? 'scale(1.1)' : 'scale(1)',
+            opacity: targetOpacity,
+            transform: targetTransform,
             transition: 'opacity 0.2s ease, transform 0.2s ease',
             zIndex: isHovered ? 10 : 1,
           },
@@ -527,7 +565,7 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
       nodesRef.current = updatedNodes
       return updatedNodes
     })
-  }, [hoveredNodeId, setNodes]) // setNodes is stable, so this is safe
+  }, [hoveredNodeId, nodes.length, setNodes]) // Only depend on hover state and node count
 
   // Update edge styles based on hover (dim edges when hovering)
   useEffect(() => {
