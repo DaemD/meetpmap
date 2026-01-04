@@ -689,21 +689,15 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
             </button>
           )}
         </ReactFlow>
-        {/* Node hover bubble - rendered outside ReactFlow to not affect layout */}
-        {(() => {
-          if (hoveredNodeId && hoveredNodePosition && userId && !hoveredNodeId.startsWith('root')) {
-            console.log('[BUBBLE] Rendering bubble for node:', hoveredNodeId, 'position:', hoveredNodePosition, 'userId:', userId)
-            return (
-              <NodeHoverBubble
-                nodeId={hoveredNodeId}
-                userId={userId}
-                nodePosition={hoveredNodePosition}
-                reactFlowInstance={reactFlowInstance.current}
-              />
-            )
-          }
-          return null
-        })()}
+      )}
+      {/* Node hover bubble - rendered outside ReactFlow to not affect layout */}
+      {hoveredNodeId && hoveredNodePosition && userId && !hoveredNodeId.startsWith('root') && (
+        <NodeHoverBubble
+          nodeId={hoveredNodeId}
+          userId={userId}
+          nodePosition={hoveredNodePosition}
+          reactFlowInstance={reactFlowInstance.current}
+        />
       )}
     </div>
   )
