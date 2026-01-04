@@ -18,18 +18,14 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS graph_nodes (
     id VARCHAR(255) PRIMARY KEY,
     user_id VARCHAR(255) NOT NULL,
-    embedding JSONB NOT NULL,  -- Store as JSON array of floats
+    embedding JSONB NOT NULL,
     summary TEXT NOT NULL,
     parent_id VARCHAR(255),
     depth INTEGER DEFAULT 0,
     last_updated TIMESTAMP DEFAULT NOW(),
     metadata JSONB DEFAULT '{}'::jsonb,
-    
-    -- Foreign key to parent (self-referential)
     CONSTRAINT fk_parent FOREIGN KEY (parent_id) 
-        REFERENCES graph_nodes(id) ON DELETE CASCADE,
-    
-    -- Note: We'll create indexes separately below
+        REFERENCES graph_nodes(id) ON DELETE CASCADE
 );
 
 -- Create indexes for faster queries
@@ -73,11 +69,12 @@ CREATE INDEX IF NOT EXISTS idx_graph_edges_to_node ON graph_edges(to_node);
 CREATE TABLE IF NOT EXISTS clusters (
     cluster_id INTEGER NOT NULL,
     user_id VARCHAR(255) NOT NULL,
-    centroid JSONB NOT NULL,  -- Store as JSON array of floats
-    color VARCHAR(7),  -- Hex color code
+    centroid JSONB NOT NULL,
+    color VARCHAR(7),
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
-    PRIMARY KEY (cluster_id, user_id)
+    PRIMARY KEY (cluster_id, user_id),
+    UNIQUE (cluster_id, user_id)
 );
 
 -- Index for clusters
@@ -89,12 +86,9 @@ CREATE TABLE IF NOT EXISTS cluster_members (
     cluster_id INTEGER NOT NULL,
     node_id VARCHAR(255) NOT NULL,
     user_id VARCHAR(255) NOT NULL,
-    
     PRIMARY KEY (cluster_id, node_id),
-    
-    -- Foreign keys
-    CONSTRAINT fk_cluster FOREIGN KEY (cluster_id) 
-        REFERENCES clusters(cluster_id) ON DELETE CASCADE,
+    CONSTRAINT fk_cluster FOREIGN KEY (cluster_id, user_id) 
+        REFERENCES clusters(cluster_id, user_id) ON DELETE CASCADE,
     CONSTRAINT fk_node FOREIGN KEY (node_id) 
         REFERENCES graph_nodes(id) ON DELETE CASCADE
 );
