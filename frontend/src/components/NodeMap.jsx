@@ -176,17 +176,16 @@ const getLayoutedElements = (nodes, edges, userModifiedNodes = new Set(), direct
 
 export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId }) {
   const [nodes, setNodes, onNodesChange] = useNodesState([])
-  const [hoveredNodeId, setHoveredNodeId] = useState(null)
-  const [hoveredNodePosition, setHoveredNodePosition] = useState(null)
+  const [clickedNodeId, setClickedNodeId] = useState(null) // Track clicked node for summary bubble
+  const [clickedNodePosition, setClickedNodePosition] = useState(null)
   const [userModifiedNodes, setUserModifiedNodes] = useState(new Set()) // Track nodes user has manually moved
   const [hasDeviated, setHasDeviated] = useState(false) // Track if user has deviated from original position
   const reactFlowInstance = useRef(null)
-  const hoveredNodeIdRef = useRef(null) // Ref to track hover state for layout effect
+  const hoveredNodeIdRef = useRef(null) // Ref to track hover state for layout effect (still used for dimming)
   const isAutoFittingRef = useRef(false) // Track if we're auto-fitting to prevent deviation detection
   const initialViewportRef = useRef(null) // Store initial viewport (x, y, zoom) to detect deviation
   const previousNodeCountRef = useRef(0) // Track previous node count to detect new nodes
   const nodesRef = useRef([]) // Ref to store current nodes for layout effect
-  const hoverTimeoutRef = useRef(null) // Ref for hover delay timeout
   
   // Handle node drag end - mark node as user-modified
   const onNodeDragStop = useCallback((event, node) => {
@@ -605,24 +604,23 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
             }
           }}
           onNodeDragStop={onNodeDragStop}
-          onNodeMouseEnter={(event, node) => {
-            console.log('[HOVER] Mouse entered node:', node.id)
-            // Clear any existing timeout
-            if (hoverTimeoutRef.current) {
-              clearTimeout(hoverTimeoutRef.current)
-            }
+          onNodeClick={(event, node) => {
+            console.log('[CLICK] Node clicked:', node.id)
             
             // Skip root nodes
             if (node.id.startsWith('root') || node.id === 'root') {
-              console.log('[HOVER] Skipping root node')
+              console.log('[CLICK] Skipping root node')
               return
             }
             
-            console.log('[HOVER] Setting timeout for node:', node.id)
-            // Add delay to prevent flicker (300ms)
-            hoverTimeoutRef.current = setTimeout(() => {
-              console.log('[HOVER] Timeout fired, setting hovered node:', node.id)
-              setHoveredNodeId(node.id)
+            // Toggle: if same node clicked, hide bubble; otherwise show for new node
+            if (clickedNodeId === node.id) {
+              console.log('[CLICK] Toggling off bubble for node:', node.id)
+              setClickedNodeId(null)
+              setClickedNodePosition(null)
+            } else {
+              console.log('[CLICK] Showing bubble for node:', node.id)
+              setClickedNodeId(node.id)
               // Get node's screen position from the event target
               const nodeElement = event.currentTarget
               if (nodeElement) {
@@ -630,24 +628,22 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
                 // Center of the node
                 const screenX = rect.left + rect.width / 2
                 const screenY = rect.top + rect.height / 2
-                console.log('[HOVER] Node screen position:', { x: screenX, y: screenY })
-                setHoveredNodePosition({ x: screenX, y: screenY })
+                console.log('[CLICK] Node screen position:', { x: screenX, y: screenY })
+                setClickedNodePosition({ x: screenX, y: screenY })
               } else {
-                console.log('[HOVER] No node element, using graph position')
+                console.log('[CLICK] No node element, using graph position')
                 // Fallback: use graph coordinates
-                setHoveredNodePosition(node.position)
+                setClickedNodePosition(node.position)
               }
-            }, 300)
+            }
+          }}
+          onNodeMouseEnter={(event, node) => {
+            // Keep hover for visual effects (enlarge, dim others)
+            setHoveredNodeId(node.id)
           }}
           onNodeMouseLeave={() => {
-            console.log('[HOVER] Mouse left node')
-            // Clear timeout if user moves away quickly
-            if (hoverTimeoutRef.current) {
-              clearTimeout(hoverTimeoutRef.current)
-              hoverTimeoutRef.current = null
-            }
+            // Keep hover for visual effects
             setHoveredNodeId(null)
-            setHoveredNodePosition(null)
           }}
           nodeTypes={nodeTypes}
           minZoom={0.1}  // Allow very deep zoom out for large graphs (manual zoom)
@@ -690,12 +686,12 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
           )}
         </ReactFlow>
       )}
-      {/* Node hover bubble - rendered outside ReactFlow to not affect layout */}
-      {hoveredNodeId && hoveredNodePosition && userId && !hoveredNodeId.startsWith('root') && (
+      {/* Node summary bubble - rendered outside ReactFlow to not affect layout */}
+      {clickedNodeId && clickedNodePosition && userId && !clickedNodeId.startsWith('root') && (
         <NodeHoverBubble
-          nodeId={hoveredNodeId}
+          nodeId={clickedNodeId}
           userId={userId}
-          nodePosition={hoveredNodePosition}
+          nodePosition={clickedNodePosition}
           reactFlowInstance={reactFlowInstance.current}
         />
       )}
