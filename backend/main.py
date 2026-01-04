@@ -3,7 +3,7 @@ MeetMap Prototype - Main FastAPI Application
 Simple pipeline: Receive chunk → Extract nodes → Return to frontend
 """
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -538,6 +538,128 @@ async def get_graph_state(user_id: str = Query(..., description="User ID (requir
 
 
 
+
+@app.post("/api/chat/ask")
+async def ask_meeting_assistant(
+    question: str = Body(..., description="User's question"),
+    user_id: str = Body(..., description="User ID")
+):
+    """
+    AI meeting assistant endpoint.
+    Answers questions about the meeting or general knowledge helpful for meetings.
+    Uses all node descriptions (summaries) from the user's graph as context.
+    """
+    try:
+        # Validate inputs
+        if not question or not question.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "question is required and cannot be empty"}
+            )
+        
+        if not user_id or not user_id.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "user_id is required"}
+            )
+        
+        # Get all nodes for the user
+        all_nodes = await db.get_all_nodes(user_id)
+        
+        if not all_nodes:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "status": "error",
+                    "message": "No meeting context available yet. Please start a meeting first."
+                }
+            )
+        
+        # Extract summaries (descriptions) from nodes, skip root nodes
+        node_descriptions = []
+        for node in all_nodes:
+            node_id = node['id']
+            summary = node.get('summary', '')
+            
+            # Skip root nodes
+            if node_id.startswith('root') or node_id == 'root':
+                continue
+            
+            # Skip empty summaries
+            if summary and summary.strip():
+                node_descriptions.append(summary.strip())
+        
+        if not node_descriptions:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "status": "error",
+                    "message": "No conversation content available yet. Please add some transcript chunks first."
+                }
+            )
+        
+        # Build context string from node descriptions
+        context_text = "\n".join([
+            f"{i+1}. {desc}" 
+            for i, desc in enumerate(node_descriptions)
+        ])
+        
+        # Build prompt
+        prompt = f"""You are a meeting assistant. Users can ask questions about:
+- The meeting/conversation that has happened
+- General knowledge questions that might help in meetings
+
+Meeting Context (ideas discussed, in chronological order):
+{context_text}
+
+User Question: {question}
+
+Provide a concise, to-the-point answer. If the question is about the meeting, 
+base your answer on the context above. If it's general knowledge, answer 
+directly but keep it relevant to meetings/collaboration."""
+        
+        # Call GPT-4o-mini
+        try:
+            response = meetmap_service.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a helpful meeting assistant. Provide concise, to-the-point answers based on the meeting context when available, or answer general knowledge questions relevant to meetings."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=500
+            )
+            
+            answer = response.choices[0].message.content.strip()
+            
+            return {
+                "status": "success",
+                "answer": answer
+            }
+            
+        except Exception as openai_error:
+            print(f"[ERROR] OpenAI API error: {openai_error}")
+            import traceback
+            traceback.print_exc()
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "status": "error",
+                    "message": "Failed to generate answer. Please try again later."
+                }
+            )
+        
+    except Exception as e:
+        print(f"[ERROR] Error in ask_meeting_assistant: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
 
 
 if __name__ == "__main__":
