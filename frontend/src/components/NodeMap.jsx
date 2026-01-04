@@ -316,17 +316,24 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
     const currentNodeIds = new Set(nodeData.map(n => n.id))
     const previousNodeIds = previousNodeIdsRef.current
     
-    // Check if node count or IDs changed
-    const nodeCountChanged = nodeData.length !== previousNodeCountRef.current
-    const nodeIdsChanged = currentNodeIds.size !== previousNodeIds.size || 
-                          [...currentNodeIds].some(id => !previousNodeIds.has(id)) ||
-                          [...previousNodeIds].some(id => !currentNodeIds.has(id))
-    
-    // Only recalculate layout if nodes actually changed
-    if (!nodeCountChanged && !nodeIdsChanged && nodesRef.current.length > 0) {
-      // Nodes haven't changed, skip layout recalculation
-      console.log('NodeMap: Nodes unchanged, skipping layout recalculation')
-      return
+    // Always calculate layout if we haven't calculated it before (previousNodeIds is empty)
+    // or if nodes don't exist yet
+    if (previousNodeIds.size === 0 || nodesRef.current.length === 0) {
+      // First time or nodes were cleared - must calculate layout
+      console.log('NodeMap: Initial layout calculation or nodes cleared')
+    } else {
+      // Check if node count or IDs changed
+      const nodeCountChanged = nodeData.length !== previousNodeCountRef.current
+      const nodeIdsChanged = currentNodeIds.size !== previousNodeIds.size || 
+                            [...currentNodeIds].some(id => !previousNodeIds.has(id)) ||
+                            [...previousNodeIds].some(id => !currentNodeIds.has(id))
+      
+      // Only skip layout if nodes truly haven't changed
+      if (!nodeCountChanged && !nodeIdsChanged) {
+        // Nodes haven't changed, skip layout recalculation
+        console.log('NodeMap: Nodes unchanged, skipping layout recalculation')
+        return
+      }
     }
     
     // Update previous node IDs
