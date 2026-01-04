@@ -97,11 +97,12 @@ class MeetMapService:
             # Global search for similar nodes (filtered by user_id if provided)
             search_start = time.time()
             print(f"[{time.strftime('%H:%M:%S')}]     Searching for similar nodes in graph...")
-            similar_nodes = self.graph_manager.find_globally_similar_nodes(
+            user_id_for_search = chunk.user_id if chunk.user_id else "system"
+            similar_nodes = await self.graph_manager.find_globally_similar_nodes(
                 candidate_embedding=embedding,
                 exclude_node_id=None,
                 filter_by_threshold=False,  # Get top-K regardless of threshold
-                user_id=chunk.user_id  # Filter by user_id
+                user_id=user_id_for_search  # Filter by user_id
             )
             search_elapsed = time.time() - search_start
             print(f"[{time.strftime('%H:%M:%S')}]     Global search completed in {search_elapsed:.3f}s - found {len(similar_nodes)} similar node(s)")
@@ -125,14 +126,15 @@ class MeetMapService:
                 # No nodes in graph - place under user-specific root
                 if chunk.user_id:
                     # Get or create user-specific root
-                    user_root = self.graph_manager.get_root(user_id=chunk.user_id)
+                    user_root = await self.graph_manager.get_root(user_id=chunk.user_id)
                     if not user_root:
                         # Create user-specific root
-                        self.graph_manager._initialize_root(user_id=chunk.user_id)
-                        user_root = self.graph_manager.get_root(user_id=chunk.user_id)
-                    parent_id = user_root.id if user_root else self.graph_manager.root_id
+                        await self.graph_manager._initialize_root(user_id=chunk.user_id)
+                        user_root = await self.graph_manager.get_root(user_id=chunk.user_id)
+                    parent_id = user_root.id if user_root else f"root_{chunk.user_id}"
                 else:
-                    parent_id = self.graph_manager.root_id
+                    root = await self.graph_manager.get_root(user_id="system")
+                    parent_id = root.id if root else "root"
                 print(f"[{time.strftime('%H:%M:%S')}]     No existing nodes found, placing under root: {parent_id}")
             llm_elapsed = time.time() - llm_start
             print(f"[{time.strftime('%H:%M:%S')}]     Placement decision completed in {llm_elapsed:.2f}s - placing under {parent_id}")
@@ -152,11 +154,15 @@ class MeetMapService:
             if chunk.user_id:
                 node_metadata["user_id"] = chunk.user_id
             
-            graph_node = self.graph_manager.add_node(
+            # user_id is required for database operations
+            user_id_for_node = chunk.user_id if chunk.user_id else "system"
+            
+            graph_node = await self.graph_manager.add_node(
                 node_id=node_id,
                 embedding=embedding,
                 summary=idea_text,
                 parent_id=parent_id,
+                user_id=user_id_for_node,
                 metadata=node_metadata
             )
             place_elapsed = time.time() - place_start
@@ -172,7 +178,7 @@ class MeetMapService:
         # Step 5: Convert graph structure to frontend format
         step5_start = time.time()
         print(f"[{time.strftime('%H:%M:%S')}] STEP 5: Converting to frontend format...")
-        nodes, edges = self._graph_to_frontend_format(new_graph_nodes, user_id=chunk.user_id)
+        nodes, edges = await self._graph_to_frontend_format(new_graph_nodes, user_id=chunk.user_id)
         step5_elapsed = time.time() - step5_start
         print(f"[{time.strftime('%H:%M:%S')}] STEP 5: Completed in {step5_elapsed:.3f}s")
         
@@ -191,7 +197,8 @@ class MeetMapService:
         print(f"[{time.strftime('%H:%M:%S')}]     Preparing GPT prompt (chunk length: {len(chunk.text)} chars)...")
         
         # Get recent chunk nodes for context (most recent 3-5 chunks)
-        recent_chunks = self.graph_manager.get_recent_chunk_nodes(num_chunks=5)
+        user_id_for_context = chunk.user_id if chunk.user_id else "system"
+        recent_chunks = await self.graph_manager.get_recent_chunk_nodes(num_chunks=5, user_id=user_id_for_context)
         
         # Build context string from recent nodes
         context_parts = []
@@ -295,7 +302,7 @@ Return ONLY the JSON object, no other text."""
             traceback.print_exc()
             return []
     
-    def _graph_to_frontend_format(
+    async def _graph_to_frontend_format(
         self,
         new_graph_nodes: List,
         user_id: Optional[str] = None
@@ -321,7 +328,8 @@ Return ONLY the JSON object, no other text."""
         # Include root node if it exists and we have new nodes
         # Check if any new node has this root as parent (indicates root was just created or is needed)
         if len(new_graph_nodes) > 0:
-            root = self.graph_manager.get_root(user_id=user_id)
+            user_id_for_root = user_id if user_id else "system"
+            root = await self.graph_manager.get_root(user_id=user_id_for_root)
             if root:
                 # Check if any new node connects to this root
                 has_root_connection = any(
@@ -405,8 +413,9 @@ Return ONLY the JSON object, no other text."""
         """
         # Format similar nodes for prompt
         similar_nodes_text = ""
+        user_id_for_path = user_id if user_id else "system"
         for idx, (node_id, similarity, node) in enumerate(similar_nodes, 1):
-            path = self.graph_manager.get_node_path(node_id)
+            path = await self.graph_manager.get_node_path(node_id, user_id_for_path)
             path_str = " → ".join(path) if path else "root"
             similar_nodes_text += f"{idx}. Node ID: {node_id}\n"
             similar_nodes_text += f"   Text: \"{node.summary}\"\n"
@@ -496,15 +505,17 @@ Return ONLY the JSON object, no other text."""
                 target_node_id = similar_nodes[0][0]  # Use first similar node
             
             # Get appropriate root ID (user-specific or global)
+            user_id_for_placement = user_id if user_id else "system"
             if user_id:
-                user_root = self.graph_manager.get_root(user_id=user_id)
-                fallback_root_id = user_root.id if user_root else self.graph_manager.root_id
+                user_root = await self.graph_manager.get_root(user_id=user_id)
+                fallback_root_id = user_root.id if user_root else f"root_{user_id}"
             else:
-                fallback_root_id = self.graph_manager.root_id
+                root = await self.graph_manager.get_root(user_id="system")
+                fallback_root_id = root.id if root else "root"
             
             # Enforce placement rules based on decision type
             if target_node_id:
-                target_node = self.graph_manager.get_node(target_node_id)
+                target_node = await self.graph_manager.get_node(target_node_id, user_id_for_placement)
                 if target_node:
                     if decision == "continuation" or decision == "resolution":
                         # Place as child of target node
@@ -523,10 +534,11 @@ Return ONLY the JSON object, no other text."""
                 parent_id = fallback_root_id
             
             # Final validation: ensure parent_id exists in graph
-            if not self.graph_manager.get_node(parent_id):
+            parent_check = await self.graph_manager.get_node(parent_id, user_id_for_placement)
+            if not parent_check:
                 print(f"      ⚠️ LLM returned invalid parent_id: {parent_id}, using fallback")
                 if target_node_id:
-                    target_node = self.graph_manager.get_node(target_node_id)
+                    target_node = await self.graph_manager.get_node(target_node_id, user_id_for_placement)
                     if target_node:
                         parent_id = target_node.parent_id if target_node.parent_id else fallback_root_id
                     else:
@@ -535,7 +547,7 @@ Return ONLY the JSON object, no other text."""
                     parent_id = fallback_root_id
             
             # Get parent node description for logging
-            parent_node = self.graph_manager.get_node(parent_id)
+            parent_node = await self.graph_manager.get_node(parent_id, user_id_for_placement)
             parent_description = parent_node.summary if parent_node else "N/A"
             
             print(f"      → LLM Decision:")
@@ -550,23 +562,25 @@ Return ONLY the JSON object, no other text."""
             import traceback
             traceback.print_exc()
             # Get appropriate root ID (user-specific or global)
+            user_id_for_fallback = user_id if user_id else "system"
             if user_id:
-                user_root = self.graph_manager.get_root(user_id=user_id)
-                fallback_root_id = user_root.id if user_root else self.graph_manager.root_id
+                user_root = await self.graph_manager.get_root(user_id=user_id)
+                fallback_root_id = user_root.id if user_root else f"root_{user_id}"
             else:
-                fallback_root_id = self.graph_manager.root_id
+                root = await self.graph_manager.get_root(user_id="system")
+                fallback_root_id = root.id if root else "root"
             # Fallback: use most similar node's parent
             if similar_nodes:
                 best_match_id, best_similarity, best_node = similar_nodes[0]
                 return best_node.parent_id if best_node.parent_id else fallback_root_id
             return fallback_root_id
     
-    def get_graph_summary(self) -> dict:
+    async def get_graph_summary(self, user_id: str) -> dict:
         """Get summary of current graph state (for debugging)"""
-        all_nodes = self.graph_manager.get_all_nodes()
+        all_nodes = await self.graph_manager.get_all_nodes(user_id=user_id)
         return {
             "total_nodes": len(all_nodes),
-            "root_id": self.graph_manager.root_id,
+            "root_id": f"root_{user_id}",
             "max_depth": max([n.depth for n in all_nodes]) if all_nodes else 0,
             "nodes_by_depth": {
                 depth: len([n for n in all_nodes if n.depth == depth])

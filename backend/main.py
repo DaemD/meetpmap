@@ -13,6 +13,7 @@ import time
 from typing import Optional
 
 from services.meetmap_service import MeetMapService
+from services.database import db
 from models.schemas import TranscriptChunk
 
 load_dotenv()
@@ -56,6 +57,55 @@ app_elapsed = time.time() - app_start
 print(f"[{time.strftime('%H:%M:%S')}] 🎉 Backend initialization complete! (Total: {app_elapsed:.2f}s)\n")
 
 
+# Database lifecycle events
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database connection on startup and run migration if needed"""
+    try:
+        print(f"[{time.strftime('%H:%M:%S')}] 🔌 Connecting to database...")
+        await db.connect()
+        print(f"[{time.strftime('%H:%M:%S')}] ✅ Database connected")
+        
+        # Run migration automatically (creates tables if they don't exist)
+        # This is safe because schema.sql uses "CREATE TABLE IF NOT EXISTS"
+        try:
+            from pathlib import Path
+            schema_file = Path(__file__).parent / "database" / "schema.sql"
+            if schema_file.exists():
+                print(f"[{time.strftime('%H:%M:%S')}] 📦 Running database migration...")
+                with open(schema_file, 'r', encoding='utf-8') as f:
+                    schema_sql = f.read()
+                await db.execute(schema_sql)
+                
+                # Verify tables
+                tables = await db.fetch("""
+                    SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public'
+                    ORDER BY table_name
+                """)
+                print(f"[{time.strftime('%H:%M:%S')}] ✅ Database ready - {len(tables)} tables found")
+            else:
+                print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Schema file not found, skipping migration")
+        except Exception as migration_error:
+            print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Migration error (tables may already exist): {migration_error}")
+            # Continue anyway - tables might already exist
+            
+    except Exception as e:
+        print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Database connection failed: {e}")
+        print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Continuing without database (will use in-memory storage)")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close database connection on shutdown"""
+    try:
+        await db.close()
+        print(f"[{time.strftime('%H:%M:%S')}] ✅ Database connection closed")
+    except Exception as e:
+        print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Error closing database: {e}")
+
+
 @app.get("/")
 async def root():
     return {"message": "MeetMap Prototype API", "status": "running"}
@@ -63,7 +113,54 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    """Health check endpoint - includes database status"""
+    try:
+        db_health = await db.health_check()
+        return {
+            "status": "healthy",
+            "database": db_health
+        }
+    except Exception as e:
+        return {
+            "status": "healthy",
+            "database": {"status": "error", "error": str(e)}
+        }
+
+
+@app.get("/api/db/test")
+async def test_database():
+    """Test database connection and basic operations"""
+    try:
+        # Check connection
+        health = await db.health_check()
+        if health.get("status") != "connected":
+            return JSONResponse(
+                status_code=503,
+                content={"status": "error", "message": "Database not connected", "health": health}
+            )
+        
+        # Test query: Get table count
+        table_count = await db.fetchval("""
+            SELECT COUNT(*) 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public'
+        """)
+        
+        # Test query: Get graph_nodes count
+        node_count = await db.fetchval("SELECT COUNT(*) FROM graph_nodes")
+        
+        return {
+            "status": "success",
+            "message": "Database connection working",
+            "database": health.get("database"),
+            "tables": table_count,
+            "nodes": node_count
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
 
 
 @app.post("/api/transcript")
@@ -111,7 +208,7 @@ async def process_transcript_chunk(chunk: dict):
 
 
 @app.get("/api/graph/path/down/{node_id}")
-async def get_downward_path(node_id: str):
+async def get_downward_path(node_id: str, user_id: str = Query(..., description="User ID (required)")):
     """Get all paths from node down to its last children"""
     try:
         if not node_id or not node_id.strip():
@@ -120,7 +217,7 @@ async def get_downward_path(node_id: str):
                 content={"status": "error", "message": "node_id is required"}
             )
         graph_manager = meetmap_service.graph_manager
-        result = graph_manager.get_downward_paths(node_id)
+        result = await graph_manager.get_downward_paths(node_id, user_id)
         return {"status": "success", **result}
     except KeyError as e:
         return JSONResponse(
@@ -135,7 +232,7 @@ async def get_downward_path(node_id: str):
 
 
 @app.get("/api/graph/path/up/{node_id}")
-async def get_upward_path(node_id: str):
+async def get_upward_path(node_id: str, user_id: str = Query(..., description="User ID (required)")):
     """Get path from node up to root"""
     try:
         if not node_id or not node_id.strip():
@@ -144,7 +241,7 @@ async def get_upward_path(node_id: str):
                 content={"status": "error", "message": "node_id is required"}
             )
         graph_manager = meetmap_service.graph_manager
-        result = graph_manager.get_path_to_root(node_id)
+        result = await graph_manager.get_path_to_root(node_id, user_id)
         return {"status": "success", **result}
     except KeyError as e:
         return JSONResponse(
@@ -159,7 +256,7 @@ async def get_upward_path(node_id: str):
 
 
 @app.get("/api/graph/maturity/{node_id}")
-async def get_maturity(node_id: str):
+async def get_maturity(node_id: str, user_id: str = Query(..., description="User ID (required)")):
     """Get maturity score for a node"""
     try:
         if not node_id or not node_id.strip():
@@ -168,7 +265,7 @@ async def get_maturity(node_id: str):
                 content={"status": "error", "message": "node_id is required"}
             )
         graph_manager = meetmap_service.graph_manager
-        result = graph_manager.calculate_maturity(node_id)
+        result = await graph_manager.calculate_maturity(node_id, user_id)
         return {"status": "success", **result}
     except KeyError as e:
         return JSONResponse(
@@ -183,7 +280,7 @@ async def get_maturity(node_id: str):
 
 
 @app.get("/api/graph/influence/{node_id}")
-async def get_influence(node_id: str):
+async def get_influence(node_id: str, user_id: str = Query(..., description="User ID (required)")):
     """Get influence score for a node"""
     try:
         if not node_id or not node_id.strip():
@@ -192,7 +289,7 @@ async def get_influence(node_id: str):
                 content={"status": "error", "message": "node_id is required"}
             )
         graph_manager = meetmap_service.graph_manager
-        result = graph_manager.calculate_influence(node_id)
+        result = await graph_manager.calculate_influence(node_id, user_id)
         return {"status": "success", **result}
     except KeyError as e:
         return JSONResponse(
@@ -207,13 +304,13 @@ async def get_influence(node_id: str):
 
 
 @app.get("/api/graph/state")
-async def get_graph_state(user_id: Optional[str] = Query(None, description="Filter nodes by user ID")):
-    """Get the complete graph state (all nodes and edges), optionally filtered by user_id"""
+async def get_graph_state(user_id: str = Query(..., description="User ID (required)")):
+    """Get the complete graph state (all nodes and edges) for a user"""
     try:
         graph_manager = meetmap_service.graph_manager
         
-        # Get all nodes filtered by user_id if provided
-        all_graph_nodes = graph_manager.get_all_nodes(user_id=user_id)
+        # Get all nodes filtered by user_id
+        all_graph_nodes = await graph_manager.get_all_nodes(user_id=user_id)
         
         # Convert to frontend format using the service's conversion method
         from models.schemas import NodeData, EdgeData
@@ -221,8 +318,8 @@ async def get_graph_state(user_id: Optional[str] = Query(None, description="Filt
         nodes = []
         edges = []
         
-        # Include root node (user-specific if user_id provided)
-        root = graph_manager.get_root(user_id=user_id)
+        # Include root node (user-specific)
+        root = await graph_manager.get_root(user_id=user_id)
         if root:
             root_node_data = NodeData(
                 id=root.id,
@@ -239,9 +336,10 @@ async def get_graph_state(user_id: Optional[str] = Query(None, description="Filt
             nodes.append(root_node_data)
         
         # Convert all other nodes
+        user_root_id = f"root_{user_id}"
         for graph_node in all_graph_nodes:
             # Skip root nodes (already added above)
-            if graph_node.id == graph_manager.root_id or (user_id and graph_node.id == f"root_{user_id}"):
+            if graph_node.id == user_root_id:
                 continue
             
             cluster_id = graph_node.metadata.get("cluster_id")
@@ -267,9 +365,8 @@ async def get_graph_state(user_id: Optional[str] = Query(None, description="Filt
             
             # Create edge from parent to this node
             if graph_node.parent_id:
-                # Determine if parent is a root node (global or user-specific)
-                is_root_parent = (graph_node.parent_id == graph_manager.root_id) or \
-                                (user_id and graph_node.parent_id == f"root_{user_id}")
+                # Determine if parent is a root node (user-specific)
+                is_root_parent = graph_node.parent_id == user_root_id
                 
                 edge = EdgeData(
                     from_node=graph_node.parent_id,
