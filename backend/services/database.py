@@ -25,11 +25,21 @@ class Database:
         # Get DATABASE_URL from environment (Railway provides this)
         self.database_url = os.getenv("DATABASE_URL")
         
+        # Strip whitespace if present
+        if self.database_url:
+            self.database_url = self.database_url.strip()
+        
         if not self.database_url:
-            raise ValueError(
-                "DATABASE_URL environment variable is required. "
-                "Please set it in Railway or your .env file."
+            error_msg = (
+                "DATABASE_URL environment variable is required.\n"
+                "Please set it in Railway:\n"
+                "1. Go to your backend service in Railway\n"
+                "2. Click on 'Variables' tab\n"
+                "3. Add DATABASE_URL from your PostgreSQL service\n"
+                "   Format: postgresql://user:password@postgres.railway.internal:5432/railway"
             )
+            print(f"[ERROR] {error_msg}")
+            raise ValueError(error_msg)
         
         # Parse DATABASE_URL and create connection pool
         # Railway DATABASE_URL format: postgresql://user:password@host:port/dbname
@@ -45,16 +55,16 @@ class Database:
                 max_size=10,
                 command_timeout=60
             )
-            print(f"✅ Database connection pool created successfully")
+            print(f"[SUCCESS] Database connection pool created successfully")
         except Exception as e:
-            print(f"❌ Error creating database pool: {e}")
+            print(f"[ERROR] Error creating database pool: {e}")
             raise
     
     async def close(self):
         """Close database connection pool"""
         if self.pool:
             await self.pool.close()
-            print("✅ Database connection pool closed")
+            print("[SUCCESS] Database connection pool closed")
     
     async def execute(self, query: str, *args) -> str:
         """
@@ -364,7 +374,7 @@ class Database:
             """
             INSERT INTO clusters (cluster_id, user_id, centroid, color, updated_at)
             VALUES ($1, $2, $3::jsonb, $4, NOW())
-            ON CONFLICT (cluster_id) DO UPDATE SET
+            ON CONFLICT (cluster_id, user_id) DO UPDATE SET
                 centroid = EXCLUDED.centroid,
                 color = EXCLUDED.color,
                 updated_at = NOW()
