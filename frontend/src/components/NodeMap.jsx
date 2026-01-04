@@ -506,6 +506,8 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
 
         return {
           ...node,
+          // CRITICAL: Preserve position exactly to prevent layout recalculation
+          position: node.position,
           // Preserve all existing properties, only update opacity, scale, and hover state
           style: {
             ...node.style,
@@ -680,6 +682,8 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
           nodeId={hoveredNodeId}
           nodePosition={hoveredNodePosition}
           userId={userId}
+          summaryCache={summaryCache}
+          setSummaryCache={setSummaryCache}
           onClose={() => {
             setHoveredNodeId(null)
             setHoveredNodePosition(null)

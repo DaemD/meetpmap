@@ -1,18 +1,24 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
 import { api } from '../services/api'
 import './NodeHoverBubble.css'
 
-export default function NodeHoverBubble({ nodeId, nodePosition, userId, onClose }) {
+export default function NodeHoverBubble({ nodeId, nodePosition, userId, summaryCache, setSummaryCache, onClose }) {
   const [summary, setSummary] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const bubbleRef = useRef(null)
-  const [position, setPosition] = useState({ top: 0, left: 0 })
 
-  // Fetch summary when component mounts
+  // Check cache first, then fetch if needed
   useEffect(() => {
     if (!nodeId || !userId) return
 
+    // Check if summary is already cached
+    if (summaryCache[nodeId]) {
+      setSummary(summaryCache[nodeId])
+      setLoading(false)
+      return
+    }
+
+    // Not in cache, fetch it
     let isMounted = true
 
     const fetchSummary = async () => {
@@ -21,8 +27,14 @@ export default function NodeHoverBubble({ nodeId, nodePosition, userId, onClose 
         setError(null)
         const response = await api.getNodeSummary(nodeId, userId)
         if (isMounted) {
-          setSummary(response.summary || 'No summary available.')
+          const summaryText = response.summary || 'No summary available.'
+          setSummary(summaryText)
           setLoading(false)
+          // Cache it
+          setSummaryCache(prev => ({
+            ...prev,
+            [nodeId]: summaryText
+          }))
         }
       } catch (err) {
         if (isMounted) {
@@ -37,49 +49,17 @@ export default function NodeHoverBubble({ nodeId, nodePosition, userId, onClose 
     return () => {
       isMounted = false
     }
-  }, [nodeId, userId])
+  }, [nodeId, userId, summaryCache, setSummaryCache])
 
-  // Calculate smart positioning
-  useEffect(() => {
-    if (!nodePosition || !bubbleRef.current) return
-
-    const bubble = bubbleRef.current
-    const bubbleWidth = 400
-    const bubbleHeight = 300
-    const padding = 20
-    const screenWidth = window.innerWidth
-    const screenHeight = window.innerHeight
-
-    // Default: position above node
-    let top = nodePosition.y - bubbleHeight - padding
-    let left = nodePosition.x - bubbleWidth / 2
-
-    // Adjust if too close to top
-    if (top < padding) {
-      top = nodePosition.y + 60 // Position below instead
-    }
-
-    // Adjust if too close to bottom
-    if (top + bubbleHeight > screenHeight - padding) {
-      top = nodePosition.y - bubbleHeight - padding
-      // If still doesn't fit, position at top
-      if (top < padding) {
-        top = padding
-      }
-    }
-
-    // Adjust if too close to left edge
-    if (left < padding) {
-      left = padding
-    }
-
-    // Adjust if too close to right edge
-    if (left + bubbleWidth > screenWidth - padding) {
-      left = screenWidth - bubbleWidth - padding
-    }
-
-    setPosition({ top, left })
-  }, [nodePosition])
+  // Simple positioning: above the node, centered
+  const bubbleWidth = 400
+  const bubbleHeight = 300
+  const padding = 20
+  
+  const position = nodePosition ? {
+    top: nodePosition.y - bubbleHeight - padding,
+    left: nodePosition.x - bubbleWidth / 2
+  } : { top: 0, left: 0 }
 
   // Parse markdown bold (**text**) to <strong>
   const renderSummary = (text) => {
@@ -98,11 +78,13 @@ export default function NodeHoverBubble({ nodeId, nodePosition, userId, onClose 
 
   return (
     <div
-      ref={bubbleRef}
       className="node-hover-bubble"
       style={{
+        position: 'fixed',
         top: `${position.top}px`,
         left: `${position.left}px`,
+        zIndex: 1000,
+        pointerEvents: 'auto',
       }}
       onMouseLeave={onClose}
     >

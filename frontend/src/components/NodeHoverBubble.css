@@ -3,6 +3,9 @@
   z-index: 1000;
   pointer-events: auto;
   animation: fadeIn 0.2s ease-in;
+  /* Prevent affecting layout */
+  will-change: transform;
+  transform: translateZ(0);
 }
 
 @keyframes fadeIn {
