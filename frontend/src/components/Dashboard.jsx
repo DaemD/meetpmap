@@ -40,6 +40,17 @@ export default function Dashboard({ userId }) {
     return () => clearInterval(interval)
   }, [userId])
 
+  // Debug: Log what we're passing to NodeMap
+  useEffect(() => {
+    console.log('Dashboard: Passing to NodeMap - nodes:', nodes.length, 'edges:', edges.length)
+    if (nodes.length > 0) {
+      console.log('Dashboard: Sample node:', nodes[0])
+    }
+    if (edges.length > 0) {
+      console.log('Dashboard: Sample edge:', edges[0])
+    }
+  }, [nodes, edges])
+
   return (
     <div className="dashboard">
       <NodeMap nodes={nodes} edges={edges} userId={userId} />

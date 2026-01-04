@@ -107,6 +107,13 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
   const reactFlowInstance = useRef(null)
   const previousNodeCountRef = useRef(0)
 
+  // Debug: Log what we receive as props
+  useEffect(() => {
+    console.log('NodeMap: Received props - nodeData:', nodeData?.length || 0, 'edgeData:', edgeData?.length || 0)
+    console.log('NodeMap: nodeData type:', Array.isArray(nodeData) ? 'array' : typeof nodeData)
+    console.log('NodeMap: nodeData value:', nodeData)
+  }, [nodeData, edgeData])
+
   // Simple layout: root at center, children positioned in a circle around parent
   const calculateLayout = useCallback((nodesData, edgesData) => {
     if (!nodesData || nodesData.length === 0) {
@@ -267,7 +274,7 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
     }
 
     previousNodeCountRef.current = currentNodeCount
-  }, [nodeData, edgeData, calculateLayout, hoveredNodeId, nodes, setNodes])
+  }, [nodeData, edgeData, calculateLayout, hoveredNodeId, setNodes])
 
   // Convert edgeData to ReactFlow edges
   const reactFlowEdges = useMemo(() => {
