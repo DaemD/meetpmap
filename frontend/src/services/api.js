@@ -40,13 +40,6 @@ export const api = {
     const params = userId ? { user_id: userId } : {}
     const response = await axios.get(`${API_BASE_URL}/api/graph/state`, { params })
     return response.data
-  },
-
-  async getNodeSummary(nodeId, userId) {
-    const response = await axios.get(`${API_BASE_URL}/api/graph/node/${nodeId}/summary`, {
-      params: { user_id: userId }
-    })
-    return response.data
   }
 }
 

@@ -48,11 +48,6 @@
 .root-node {
   background: #e8f5e9 !important;
   border-color: #4caf50 !important;
-}
-
-.custom-node.hovered {
-  box-shadow: 0 4px 20px rgba(25, 118, 210, 0.4) !important;
-  border-color: #1976d2 !important;
   border-width: 3px !important;
   font-weight: bold;
 }
