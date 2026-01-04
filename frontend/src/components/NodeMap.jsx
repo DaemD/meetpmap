@@ -193,13 +193,8 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
   // Handle ReactFlow initialization
   const onInit = useCallback((instance) => {
     reactFlowInstance.current = instance
-    // Store initial viewport (x, y, zoom) to detect deviation
-    const viewport = instance.getViewport()
-    initialViewportRef.current = {
-      x: viewport.x,
-      y: viewport.y,
-      zoom: viewport.zoom
-    }
+    // Don't store initial viewport yet - wait for nodes to be laid out and centered first
+    // This prevents storing an incorrect initial position that causes left-side positioning
   }, [])
   
   // Track when user starts moving (for potential future use)
@@ -462,19 +457,22 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
           }
         }, 150)
       } else if (previousNodeCount === 0 && currentNodeCount > 0 && reactFlowInstance.current) {
-        // First time nodes appear - also auto-center and set initial viewport
+        // First time nodes appear - auto-center with longer delay to ensure layout is complete
         isAutoFittingRef.current = true
         setTimeout(() => {
           if (reactFlowInstance.current) {
+            // Use fitView to center the graph properly
             reactFlowInstance.current.fitView({ 
               padding: 0.15,
-              duration: 500,
+              duration: 600, // Longer duration for smoother initial centering
               minZoom: 0.3,
-              maxZoom: 1.2
+              maxZoom: 1.2,
+              includeHiddenNodes: false
             })
             setTimeout(() => {
               const viewport = reactFlowInstance.current?.getViewport()
               if (viewport) {
+                // Store the centered viewport as initial
                 initialViewportRef.current = {
                   x: viewport.x,
                   y: viewport.y,
@@ -483,9 +481,9 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
                 setHasDeviated(false)
               }
               isAutoFittingRef.current = false
-            }, 600)
+            }, 700) // Longer timeout to ensure animation completes
           }
-        }, 150)
+        }, 300) // Longer delay to ensure dagre layout is fully applied
       }
       
       // Update previous node count
