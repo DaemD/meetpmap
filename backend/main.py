@@ -42,39 +42,82 @@ async def lifespan(app: FastAPI):
                 with open(schema_file, 'r', encoding='utf-8') as f:
                     schema_sql = f.read()
                 
-                # Remove COMMENT statements (asyncpg may have issues with them)
+                # Parse SQL into individual statements properly
+                # Handle multi-line statements by tracking when we're inside a statement
                 lines = schema_sql.split('\n')
-                cleaned_sql = []
+                statements = []
+                current_stmt = []
+                
                 for line in lines:
-                    # Skip COMMENT statements
-                    if line.strip().upper().startswith('COMMENT'):
+                    stripped = line.strip()
+                    # Skip COMMENT statements and empty/comment-only lines
+                    if stripped.upper().startswith('COMMENT') or not stripped or stripped.startswith('--'):
                         continue
-                    # Keep the line (including comments for documentation)
-                    cleaned_sql.append(line)
+                    # Remove inline comments
+                    if '--' in line:
+                        line = line[:line.index('--')].strip()
+                        if not line:
+                            continue
+                    
+                    current_stmt.append(line)
+                    
+                    # If line ends with semicolon, we have a complete statement
+                    if line.rstrip().endswith(';'):
+                        stmt = ' '.join(current_stmt).strip()
+                        if stmt and len(stmt) > 5:  # Ignore very short statements
+                            statements.append(stmt.rstrip(';').strip())
+                        current_stmt = []
                 
-                schema_sql = '\n'.join(cleaned_sql)
+                # If there's a remaining statement without semicolon, add it
+                if current_stmt:
+                    stmt = ' '.join(current_stmt).strip()
+                    if stmt and len(stmt) > 5:
+                        statements.append(stmt)
                 
-                # Execute SQL - asyncpg should handle multiple statements
-                try:
-                    await db.execute(schema_sql)
-                except Exception as migration_error:
-                    # Check if it's a syntax error we can handle
-                    error_str = str(migration_error).lower()
-                    if 'syntax error' in error_str:
-                        print(f"[{time.strftime('%H:%M:%S')}] [WARNING] SQL syntax error - trying alternative execution method")
-                        # Try executing statements one by one
-                        statements = [s.strip() for s in schema_sql.split(';') if s.strip() and not s.strip().startswith('--')]
-                        for stmt in statements:
-                            if stmt and len(stmt) > 10:  # Ignore very short statements
-                                try:
-                                    await db.execute(stmt)
-                                except Exception as e:
-                                    error_msg = str(e).lower()
-                                    if 'already exists' not in error_msg:
-                                        print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Statement failed (may be expected): {stmt[:50]}... Error: {e}")
-                    else:
-                        # Other errors (like "already exists") are expected
-                        print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Migration error (tables may already exist): {migration_error}")
+                # Separate CREATE TABLE from other statements
+                create_table_statements = []
+                other_statements = []
+                
+                for stmt in statements:
+                    stmt_upper = stmt.upper().strip()
+                    if stmt_upper.startswith('CREATE TABLE'):
+                        create_table_statements.append(stmt)
+                    elif stmt_upper.startswith('CREATE') or stmt_upper.startswith('ALTER'):
+                        other_statements.append(stmt)
+                
+                # Execute CREATE TABLE statements first
+                print(f"[{time.strftime('%H:%M:%S')}] [*] Creating tables ({len(create_table_statements)} statements)...")
+                for stmt in create_table_statements:
+                    try:
+                        await db.execute(stmt)
+                        # Extract table name for logging
+                        parts = stmt.upper().split('CREATE TABLE')
+                        if len(parts) > 1:
+                            table_part = parts[1].strip().split()[0]
+                            table_name = table_part.replace('IF', '').replace('NOT', '').replace('EXISTS', '').strip()
+                            print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Table created/verified: {table_name}")
+                    except Exception as e:
+                        error_msg = str(e).lower()
+                        if 'already exists' not in error_msg:
+                            print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to create table: {e}")
+                            # Show first 150 chars of statement for debugging
+                            print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Statement: {stmt[:150]}...")
+                
+                # Then execute indexes and other statements
+                if other_statements:
+                    print(f"[{time.strftime('%H:%M:%S')}] [*] Creating indexes and constraints ({len(other_statements)} statements)...")
+                    for stmt in other_statements:
+                        try:
+                            await db.execute(stmt)
+                        except Exception as e:
+                            error_msg = str(e).lower()
+                            # These errors are often expected (already exists, etc.)
+                            if 'already exists' not in error_msg:
+                                # Only log if it's not a "does not exist" error (tables should exist by now)
+                                if 'does not exist' in error_msg:
+                                    print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Index/constraint skipped (table may not exist yet): {stmt[:50]}...")
+                                else:
+                                    print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Index/constraint may have failed: {stmt[:50]}... Error: {e}")
                 
                 # Verify tables
                 tables = await db.fetch("""
