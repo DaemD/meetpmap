@@ -380,6 +380,70 @@ async def get_influence(node_id: str, user_id: str = Query(..., description="Use
         )
 
 
+@app.get("/api/graph/node/{node_id}/summary")
+async def get_node_summary(node_id: str, user_id: str = Query(..., description="User ID (required)")):
+    """Get conversation summary from root to this node (max 50 words)"""
+    try:
+        if not node_id or not node_id.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "node_id is required"}
+            )
+        
+        # Skip root nodes
+        if node_id.startswith("root") or node_id == "root":
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Summary not available for root nodes"}
+            )
+        
+        graph_manager = meetmap_service.graph_manager
+        
+        # Get path from root to this node
+        path_result = await graph_manager.get_path_to_root(node_id, user_id)
+        path_node_ids = path_result.get("path", [])
+        
+        if not path_node_ids:
+            return JSONResponse(
+                status_code=404,
+                content={"status": "error", "message": f"Path not found for node: {node_id}"}
+            )
+        
+        # Get all nodes in the path
+        path_nodes = []
+        for path_node_id in path_node_ids:
+            node = await graph_manager.get_node(path_node_id, user_id)
+            if node:
+                path_nodes.append(node)
+        
+        if not path_nodes:
+            return JSONResponse(
+                status_code=404,
+                content={"status": "error", "message": "Nodes in path not found"}
+            )
+        
+        # Extract summaries from path nodes
+        node_summaries = [node.summary for node in path_nodes]
+        
+        # Generate summary using LLM
+        summary = await meetmap_service.generate_path_summary(node_summaries)
+        
+        return {
+            "status": "success",
+            "summary": summary,
+            "node_id": node_id
+        }
+        
+    except Exception as e:
+        print(f"[ERROR] Error generating node summary: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
 @app.get("/api/graph/state")
 async def get_graph_state(user_id: str = Query(..., description="User ID (required)")):
     """Get the complete graph state (all nodes and edges) for a user"""

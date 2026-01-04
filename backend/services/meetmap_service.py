@@ -587,3 +587,77 @@ Return ONLY the JSON object, no other text."""
                 for depth in range(max([n.depth for n in all_nodes]) + 1) if all_nodes
             }
         }
+    
+    async def generate_path_summary(self, node_summaries: List[str]) -> str:
+        """
+        Generate a concise summary (max 50 words) of conversation path
+        
+        Args:
+            node_summaries: List of node summaries from root to target node
+        
+        Returns:
+            Summary string (max 50 words)
+        """
+        if not node_summaries:
+            return "No conversation content available."
+        
+        # Filter out root node summary if it's generic
+        filtered_summaries = [
+            s for s in node_summaries 
+            if s and s.lower() not in ["meeting start", "root", ""]
+        ]
+        
+        if not filtered_summaries:
+            return "Conversation started but no ideas discussed yet."
+        
+        # Build prompt
+        conversation_text = "\n".join([
+            f"{i+1}. {summary}" 
+            for i, summary in enumerate(filtered_summaries)
+        ])
+        
+        prompt = f"""You are summarizing a conversation that progressed through these ideas:
+
+{conversation_text}
+
+Generate a concise, flowing summary (maximum 50 words) of the entire conversation up to this point. 
+Make it read like a natural narrative of what was discussed.
+
+IMPORTANT: 
+- Maximum 50 words
+- Make it flow naturally
+- Focus on the progression of ideas
+- Return ONLY the summary text, no numbering, no formatting, no quotes
+
+Return ONLY the summary text."""
+
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert at creating concise, flowing summaries of conversations. Always return exactly what is requested, no extra formatting."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=100  # Limit tokens to enforce 50-word limit
+            )
+            
+            summary = response.choices[0].message.content.strip()
+            
+            # Remove any quotes or formatting
+            summary = summary.strip('"').strip("'").strip()
+            
+            # Enforce 50-word limit (safety check)
+            words = summary.split()
+            if len(words) > 50:
+                summary = " ".join(words[:50]) + "..."
+            
+            return summary
+            
+        except Exception as e:
+            print(f"[ERROR] Error generating path summary: {e}")
+            # Fallback: simple concatenation
+            return ". ".join(filtered_summaries[:3]) + "."

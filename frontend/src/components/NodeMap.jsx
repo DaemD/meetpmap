@@ -13,6 +13,7 @@ import dagre from 'dagre'
 import 'reactflow/dist/style.css'
 import './NodeMap.css'
 import { api } from '../services/api'
+import NodeHoverBubble from './NodeHoverBubble'
 
 const nodeTypes = {
   decision: DecisionNode,
@@ -173,9 +174,10 @@ const getLayoutedElements = (nodes, edges, userModifiedNodes = new Set(), direct
   }
 }
 
-export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
+export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId }) {
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [hoveredNodeId, setHoveredNodeId] = useState(null)
+  const [hoveredNodePosition, setHoveredNodePosition] = useState(null)
   const [userModifiedNodes, setUserModifiedNodes] = useState(new Set()) // Track nodes user has manually moved
   const [hasDeviated, setHasDeviated] = useState(false) // Track if user has deviated from original position
   const reactFlowInstance = useRef(null)
@@ -184,6 +186,7 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
   const initialViewportRef = useRef(null) // Store initial viewport (x, y, zoom) to detect deviation
   const previousNodeCountRef = useRef(0) // Track previous node count to detect new nodes
   const nodesRef = useRef([]) // Ref to store current nodes for layout effect
+  const hoverTimeoutRef = useRef(null) // Ref for hover delay timeout
   
   // Handle node drag end - mark node as user-modified
   const onNodeDragStop = useCallback((event, node) => {
@@ -602,8 +605,43 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
             }
           }}
           onNodeDragStop={onNodeDragStop}
-          onNodeMouseEnter={(event, node) => setHoveredNodeId(node.id)}
-          onNodeMouseLeave={() => setHoveredNodeId(null)}
+          onNodeMouseEnter={(event, node) => {
+            // Clear any existing timeout
+            if (hoverTimeoutRef.current) {
+              clearTimeout(hoverTimeoutRef.current)
+            }
+            
+            // Skip root nodes
+            if (node.id.startsWith('root') || node.id === 'root') {
+              return
+            }
+            
+            // Add delay to prevent flicker (300ms)
+            hoverTimeoutRef.current = setTimeout(() => {
+              setHoveredNodeId(node.id)
+              // Get node's screen position from the event target
+              const nodeElement = event.currentTarget
+              if (nodeElement) {
+                const rect = nodeElement.getBoundingClientRect()
+                // Center of the node
+                const screenX = rect.left + rect.width / 2
+                const screenY = rect.top + rect.height / 2
+                setHoveredNodePosition({ x: screenX, y: screenY })
+              } else {
+                // Fallback: use graph coordinates
+                setHoveredNodePosition(node.position)
+              }
+            }, 300)
+          }}
+          onNodeMouseLeave={() => {
+            // Clear timeout if user moves away quickly
+            if (hoverTimeoutRef.current) {
+              clearTimeout(hoverTimeoutRef.current)
+              hoverTimeoutRef.current = null
+            }
+            setHoveredNodeId(null)
+            setHoveredNodePosition(null)
+          }}
           nodeTypes={nodeTypes}
           minZoom={0.1}  // Allow very deep zoom out for large graphs (manual zoom)
           maxZoom={2}    // Allow zoom in
@@ -644,6 +682,15 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [] }) {
             </button>
           )}
         </ReactFlow>
+        {/* Node hover bubble - rendered outside ReactFlow to not affect layout */}
+        {hoveredNodeId && hoveredNodePosition && userId && !hoveredNodeId.startsWith('root') && (
+          <NodeHoverBubble
+            nodeId={hoveredNodeId}
+            userId={userId}
+            nodePosition={hoveredNodePosition}
+            reactFlowInstance={reactFlowInstance.current}
+          />
+        )}
       )}
     </div>
   )
