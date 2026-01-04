@@ -228,14 +228,28 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
 
     // Convert to ReactFlow nodes
     const flowNodes = nodeData.map(node => {
-      const calculatedPosition = positions.get(node.id) || { x: 500, y: 400 }
-      const existingNode = nodes.find(n => n.id === node.id)
+      const calculatedPosition = positions.get(node.id)
+      if (!calculatedPosition) {
+        console.warn(`NodeMap: No position calculated for node ${node.id}, using fallback`)
+      }
+      const position = calculatedPosition || { x: 500, y: 400 }
+      
+      // Only check for user-modified position if node already exists in state
+      // On initial load, nodes will be empty, so we always use calculated position
+      const existingNode = nodes.length > 0 ? nodes.find(n => n.id === node.id) : null
       const isUserModified = userModifiedNodes.current.has(node.id)
       
-      // Only preserve position if user has manually dragged this node
-      const finalPosition = (isUserModified && existingNode?.position) || calculatedPosition
+      // Only preserve position if user has manually dragged this node AND we have an existing node
+      // On first load, existingNode will be null, so we always use calculated position
+      let finalPosition = (isUserModified && existingNode?.position) ? existingNode.position : position
       
-      console.log(`NodeMap: Converting node ${node.id} - calculated:`, calculatedPosition, 'userModified:', isUserModified, 'final:', finalPosition)
+      // Ensure position is valid (has x and y as numbers)
+      if (!finalPosition || typeof finalPosition.x !== 'number' || typeof finalPosition.y !== 'number') {
+        console.warn(`NodeMap: Invalid position for ${node.id}, using fallback`)
+        finalPosition = { x: 500, y: 400 }
+      }
+      
+      console.log(`NodeMap: Converting node ${node.id} - calculated:`, position, 'userModified:', isUserModified, 'existing:', !!existingNode, 'final:', finalPosition)
 
       return {
         id: node.id,
