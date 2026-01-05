@@ -194,13 +194,31 @@ async def lifespan(app: FastAPI):
                         await db.execute("ALTER TABLE clusters ADD COLUMN IF NOT EXISTS meeting_id VARCHAR(255)")
                         await db.execute("ALTER TABLE cluster_members ADD COLUMN IF NOT EXISTS meeting_id VARCHAR(255)")
                         
+                        # Make user_id nullable (if it exists) to allow migration
+                        try:
+                            await db.execute("ALTER TABLE graph_nodes ALTER COLUMN user_id DROP NOT NULL")
+                        except Exception:
+                            pass  # Column might not exist or already nullable
+                        try:
+                            await db.execute("ALTER TABLE graph_edges ALTER COLUMN user_id DROP NOT NULL")
+                        except Exception:
+                            pass
+                        try:
+                            await db.execute("ALTER TABLE clusters ALTER COLUMN user_id DROP NOT NULL")
+                        except Exception:
+                            pass
+                        try:
+                            await db.execute("ALTER TABLE cluster_members ALTER COLUMN user_id DROP NOT NULL")
+                        except Exception:
+                            pass
+                        
                         # Create indexes
                         await db.execute("CREATE INDEX IF NOT EXISTS idx_graph_nodes_meeting_id ON graph_nodes(meeting_id)")
                         await db.execute("CREATE INDEX IF NOT EXISTS idx_graph_edges_meeting_id ON graph_edges(meeting_id)")
                         await db.execute("CREATE INDEX IF NOT EXISTS idx_clusters_meeting_id ON clusters(meeting_id)")
                         await db.execute("CREATE INDEX IF NOT EXISTS idx_cluster_members_meeting_id ON cluster_members(meeting_id)")
                         
-                        print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Added meeting_id columns to existing tables")
+                        print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Added meeting_id columns to existing tables and made user_id nullable")
                     else:
                         print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Database schema is up to date (meeting_id columns exist)")
                 except Exception as migration_error:

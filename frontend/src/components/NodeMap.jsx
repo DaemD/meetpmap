@@ -174,7 +174,7 @@ const getLayoutedElements = (nodes, edges, userModifiedNodes = new Set(), direct
   }
 }
 
-export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId }) {
+export default function NodeMap({ nodes: nodeData, edges: edgeData = [], meetingId }) {
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [hoveredNodeId, setHoveredNodeId] = useState(null) // For visual effects (enlarge, dim)
   const [clickedNodeId, setClickedNodeId] = useState(null) // Track clicked node for summary bubble
@@ -688,10 +688,10 @@ export default function NodeMap({ nodes: nodeData, edges: edgeData = [], userId 
         </ReactFlow>
       )}
       {/* Node summary bubble - rendered outside ReactFlow to not affect layout */}
-      {clickedNodeId && clickedNodePosition && userId && !clickedNodeId.startsWith('root') && (
+      {clickedNodeId && clickedNodePosition && meetingId && !clickedNodeId.startsWith('root') && (
         <NodeHoverBubble
           nodeId={clickedNodeId}
-          userId={userId}
+          meetingId={meetingId}
           nodePosition={clickedNodePosition}
           reactFlowInstance={reactFlowInstance.current}
         />

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { api } from '../services/api'
 import './NodeHoverBubble.css'
 
-export default function NodeHoverBubble({ nodeId, userId, nodePosition, reactFlowInstance }) {
+export default function NodeHoverBubble({ nodeId, meetingId, nodePosition, reactFlowInstance }) {
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -10,8 +10,8 @@ export default function NodeHoverBubble({ nodeId, userId, nodePosition, reactFlo
 
   // Fetch summary when component mounts
   useEffect(() => {
-    console.log('[BUBBLE] Component mounted/updated:', { nodeId, userId })
-    if (!nodeId || !userId || nodeId.startsWith('root')) {
+    console.log('[BUBBLE] Component mounted/updated:', { nodeId, meetingId })
+    if (!nodeId || !meetingId || nodeId.startsWith('root')) {
       console.log('[BUBBLE] Skipping fetch - invalid params')
       setLoading(false)
       return
@@ -21,10 +21,10 @@ export default function NodeHoverBubble({ nodeId, userId, nodePosition, reactFlo
 
     const fetchSummary = async () => {
       try {
-        console.log('[BUBBLE] Fetching summary for node:', nodeId, 'user:', userId)
+        console.log('[BUBBLE] Fetching summary for node:', nodeId, 'meeting:', meetingId)
         setLoading(true)
         setError(null)
-        const response = await api.getNodeSummary(nodeId, userId)
+        const response = await api.getNodeSummary(nodeId, meetingId)
         console.log('[BUBBLE] Summary response:', response)
         
         if (!cancelled) {
@@ -51,7 +51,7 @@ export default function NodeHoverBubble({ nodeId, userId, nodePosition, reactFlo
     return () => {
       cancelled = true
     }
-  }, [nodeId, userId])
+  }, [nodeId, meetingId])
 
   // Calculate bubble position based on node screen position
   useEffect(() => {

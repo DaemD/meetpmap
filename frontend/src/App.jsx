@@ -3,48 +3,39 @@ import Dashboard from './components/Dashboard'
 import './App.css'
 
 function App() {
-  const [userId, setUserId] = useState(null)
+  const [meetingId, setMeetingId] = useState(null)
   const [loading, setLoading] = useState(true)
   
   useEffect(() => {
-    // Get userId from your service
-    // TODO: Replace this with your actual service call
-    const fetchUserId = async () => {
+    // Get meeting_id from URL parameter
+    const fetchMeetingId = async () => {
       try {
-        // Option 1: Get from URL parameter (for testing)
+        // Get from URL parameter (required)
         const params = new URLSearchParams(window.location.search)
-        const urlUserId = params.get('user_id')
+        const urlMeetingId = params.get('meeting_id')
         
-        if (urlUserId) {
-          setUserId(urlUserId)
+        if (urlMeetingId) {
+          setMeetingId(urlMeetingId)
           setLoading(false)
           return
         }
         
-        // Option 2: Get from your auth service API
-        // Uncomment and modify based on your service:
-        // const response = await fetch('https://your-auth-service.com/api/current-user')
-        // const user = await response.json()
-        // setUserId(user.id)
+        // Fallback: Check localStorage
+        const storedMeetingId = localStorage.getItem('meeting_id')
         
-        // Option 3: Get from localStorage (if your service stores it)
-        const storedUserId = localStorage.getItem('user_id') || 
-                            localStorage.getItem('auth_user_id') ||
-                            localStorage.getItem('current_user_id')
-        
-        if (storedUserId) {
-          setUserId(storedUserId)
+        if (storedMeetingId) {
+          setMeetingId(storedMeetingId)
         } else {
-          console.warn('No userId found. Please provide userId via URL (?user_id=xxx) or your auth service.')
+          console.warn('No meeting_id found. Please provide meeting_id via URL (?meeting_id=xxx)')
         }
       } catch (error) {
-        console.error('Error fetching userId:', error)
+        console.error('Error fetching meeting_id:', error)
       } finally {
         setLoading(false)
       }
     }
     
-    fetchUserId()
+    fetchMeetingId()
   }, [])
   
   if (loading) {
@@ -55,14 +46,14 @@ function App() {
     )
   }
   
-  if (!userId) {
+  if (!meetingId) {
     return (
       <div className="App" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', flexDirection: 'column' }}>
-        <h2>No user ID found</h2>
-        <p>Please provide userId via:</p>
+        <h2>No meeting ID found</h2>
+        <p>Please provide meeting_id via:</p>
         <ul style={{ textAlign: 'left' }}>
-          <li>URL parameter: <code>?user_id=your_user_id</code></li>
-          <li>Or configure your auth service to provide userId</li>
+          <li>URL parameter: <code>?meeting_id=your_meeting_id</code></li>
+          <li>Example: <code>?meeting_id=meeting_07507e7bb202</code></li>
         </ul>
       </div>
     )
@@ -70,7 +61,7 @@ function App() {
   
   return (
     <div className="App">
-      <Dashboard userId={userId} />
+      <Dashboard meetingId={meetingId} />
     </div>
   )
 }

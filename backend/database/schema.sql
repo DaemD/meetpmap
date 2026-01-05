@@ -46,6 +46,9 @@ CREATE TABLE IF NOT EXISTS graph_nodes (
         REFERENCES meetings(id) ON DELETE CASCADE
 );
 
+-- Note: If migrating from old schema, user_id column may still exist
+-- It should be made nullable or removed after migration
+
 -- Create indexes for faster queries
 CREATE INDEX IF NOT EXISTS idx_graph_nodes_meeting_id ON graph_nodes(meeting_id);
 CREATE INDEX IF NOT EXISTS idx_graph_nodes_parent_id ON graph_nodes(parent_id);

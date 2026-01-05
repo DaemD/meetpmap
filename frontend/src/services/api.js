@@ -36,15 +36,21 @@ export const api = {
     return response.data
   },
 
-  async getGraphState(userId = null) {
-    const params = userId ? { user_id: userId } : {}
+  async getGraphState(meetingId) {
+    if (!meetingId) {
+      throw new Error('meeting_id is required')
+    }
+    const params = { meeting_id: meetingId }
     const response = await axios.get(`${API_BASE_URL}/api/graph/state`, { params })
     return response.data
   },
 
-  async getNodeSummary(nodeId, userId) {
+  async getNodeSummary(nodeId, meetingId) {
+    if (!meetingId) {
+      throw new Error('meeting_id is required')
+    }
     const response = await axios.get(`${API_BASE_URL}/api/graph/node/${nodeId}/summary`, {
-      params: { user_id: userId }
+      params: { meeting_id: meetingId }
     })
     return response.data
   }
