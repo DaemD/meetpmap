@@ -142,7 +142,9 @@ class MeetMapService:
             # Place node in graph
             place_start = time.time()
             self.node_counter += 1
-            node_id = f"node_{self.node_counter}"
+            # Make node IDs unique per user to avoid conflicts
+            user_id_for_node = chunk.user_id if chunk.user_id else "system"
+            node_id = f"node_{user_id_for_node}_{self.node_counter}"
             
             # Include user_id in metadata if provided
             node_metadata = {
