@@ -466,10 +466,9 @@ async def create_meeting(request: MeetingCreateRequest):
         import uuid
         meeting_id = f"meeting_{uuid.uuid4().hex[:12]}"
         
-        # Create meeting in database (user_id is optional/nullable)
+        # Create meeting in database
         await db.create_meeting(
             meeting_id=meeting_id,
-            user_id=None,  # No user_id needed
             title=request.title.strip() if request.title else "Untitled Meeting",
             description=request.description.strip() if request.description else None
         )

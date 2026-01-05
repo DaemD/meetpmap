@@ -122,20 +122,19 @@ class Database:
     async def create_meeting(
         self,
         meeting_id: str,
-        user_id: Optional[str] = None,
         title: str = "Untitled Meeting",
         description: Optional[str] = None
     ) -> str:
         """Create a new meeting"""
         await self.execute(
             """
-            INSERT INTO meetings (id, user_id, title, description)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO meetings (id, title, description)
+            VALUES ($1, $2, $3)
             ON CONFLICT (id) DO UPDATE SET
                 title = EXCLUDED.title,
                 description = EXCLUDED.description
             """,
-            meeting_id, user_id, title, description or ""
+            meeting_id, title, description or ""
         )
         return "Meeting created"
     
