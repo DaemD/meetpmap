@@ -580,9 +580,11 @@ async def transcribe_audio(request: TranscribeRequest, background_tasks: Backgro
                         "chunk_id": None
                     }
                     print(f"[{time.strftime('%H:%M:%S')}] 🔄 Processing transcription to extract nodes (background)...")
+                    print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Chunk data: text_length={len(transcription)}, meeting_id={meeting_id}")
                     result = await process_transcript_chunk(chunk_dict)
                     if isinstance(result, JSONResponse):
-                        print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Error processing transcription: {result.body}")
+                        error_body = result.body.decode() if isinstance(result.body, bytes) else str(result.body)
+                        print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Error processing transcription: {error_body}")
                     else:
                         nodes_count = len(result.get('nodes', []))
                         edges_count = len(result.get('edges', []))
@@ -590,6 +592,8 @@ async def transcribe_audio(request: TranscribeRequest, background_tasks: Backgro
                         # Verify nodes were actually saved to database
                         saved_nodes = await db.get_all_nodes(meeting_id)
                         print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Verified: {len(saved_nodes)} nodes in database for meeting_id={meeting_id}")
+                        if nodes_count > 0 and len(saved_nodes) == 0:
+                            print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Nodes were extracted but not saved to database!")
                 except Exception as process_error:
                     print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Error processing transcription: {process_error}")
                     import traceback
