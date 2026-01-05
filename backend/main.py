@@ -228,7 +228,7 @@ async def lifespan(app: FastAPI):
                             except Exception as e:
                                 print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Could not make cluster_members.user_id nullable: {e}")
                         
-                        # Fix clusters table primary key if it includes user_id
+                        # Fix clusters table - drop and recreate if primary key is wrong
                         try:
                             pk_constraint = await db.fetch("""
                                 SELECT constraint_name, constraint_type
@@ -238,8 +238,9 @@ async def lifespan(app: FastAPI):
                                 AND constraint_type = 'PRIMARY KEY'
                             """)
                             
+                            needs_recreate = False
                             if pk_constraint:
-                                # Check if the primary key includes user_id
+                                # Check if the primary key includes user_id or doesn't have meeting_id
                                 pk_columns = await db.fetch("""
                                     SELECT column_name
                                     FROM information_schema.key_column_usage
@@ -251,14 +252,52 @@ async def lifespan(app: FastAPI):
                                 
                                 pk_cols = [col['column_name'] for col in pk_columns]
                                 if 'user_id' in pk_cols or ('cluster_id' in pk_cols and 'meeting_id' not in pk_cols):
-                                    print(f"[{time.strftime('%H:%M:%S')}] [*] Fixing clusters table primary key...")
-                                    # Drop old primary key
-                                    await db.execute(f"ALTER TABLE clusters DROP CONSTRAINT IF EXISTS {pk_constraint[0]['constraint_name']}")
-                                    # Create new primary key with (cluster_id, meeting_id)
-                                    await db.execute("ALTER TABLE clusters ADD PRIMARY KEY (cluster_id, meeting_id)")
-                                    print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Fixed clusters table primary key to (cluster_id, meeting_id)")
+                                    needs_recreate = True
+                            
+                            if needs_recreate:
+                                print(f"[{time.strftime('%H:%M:%S')}] [*] Recreating clusters table with correct schema...")
+                                # Drop the table (this will cascade delete cluster_members)
+                                await db.execute("DROP TABLE IF EXISTS cluster_members CASCADE")
+                                await db.execute("DROP TABLE IF EXISTS clusters CASCADE")
+                                
+                                # Recreate with correct schema
+                                await db.execute("""
+                                    CREATE TABLE clusters (
+                                        cluster_id INTEGER NOT NULL,
+                                        meeting_id VARCHAR(255) NOT NULL,
+                                        centroid JSONB NOT NULL,
+                                        color VARCHAR(7),
+                                        created_at TIMESTAMP DEFAULT NOW(),
+                                        updated_at TIMESTAMP DEFAULT NOW(),
+                                        PRIMARY KEY (cluster_id, meeting_id),
+                                        CONSTRAINT fk_cluster_meeting FOREIGN KEY (meeting_id) 
+                                            REFERENCES meetings(id) ON DELETE CASCADE
+                                    )
+                                """)
+                                
+                                await db.execute("CREATE INDEX IF NOT EXISTS idx_clusters_meeting_id ON clusters(meeting_id)")
+                                
+                                # Recreate cluster_members table
+                                await db.execute("""
+                                    CREATE TABLE cluster_members (
+                                        cluster_id INTEGER NOT NULL,
+                                        node_id VARCHAR(255) NOT NULL,
+                                        meeting_id VARCHAR(255) NOT NULL,
+                                        PRIMARY KEY (cluster_id, node_id),
+                                        CONSTRAINT fk_cluster FOREIGN KEY (cluster_id, meeting_id) 
+                                            REFERENCES clusters(cluster_id, meeting_id) ON DELETE CASCADE,
+                                        CONSTRAINT fk_node FOREIGN KEY (node_id) 
+                                            REFERENCES graph_nodes(id) ON DELETE CASCADE
+                                    )
+                                """)
+                                
+                                await db.execute("CREATE INDEX IF NOT EXISTS idx_cluster_members_cluster_id ON cluster_members(cluster_id)")
+                                await db.execute("CREATE INDEX IF NOT EXISTS idx_cluster_members_node_id ON cluster_members(node_id)")
+                                await db.execute("CREATE INDEX IF NOT EXISTS idx_cluster_members_meeting_id ON cluster_members(meeting_id)")
+                                
+                                print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Recreated clusters and cluster_members tables with correct schema")
                         except Exception as e:
-                            print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Could not fix clusters primary key: {e}")
+                            print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Could not fix clusters table: {e}")
                         
                         # Create indexes for meeting_id if meeting_id was just added
                         if not has_meeting_id:
