@@ -181,15 +181,24 @@ class GraphManager:
             node_metadata['user_id'] = user_id
         
         # Save node to database
-        await db.save_node(
-            node_id=node_id,
-            user_id=user_id,
-            embedding=embedding,
-            summary=summary,
-            parent_id=parent_id,
-            depth=depth,
-            metadata=node_metadata
-        )
+        import time
+        print(f"[{time.strftime('%H:%M:%S')}] [GRAPH_MANAGER] About to save node: {node_id} for user_id={user_id}")
+        try:
+            await db.save_node(
+                node_id=node_id,
+                user_id=user_id,
+                embedding=embedding,
+                summary=summary,
+                parent_id=parent_id,
+                depth=depth,
+                metadata=node_metadata
+            )
+            print(f"[{time.strftime('%H:%M:%S')}] [GRAPH_MANAGER] Successfully called save_node for: {node_id}")
+        except Exception as e:
+            print(f"[{time.strftime('%H:%M:%S')}] [GRAPH_MANAGER ERROR] Failed to save node {node_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
         
         # Create edge in database
         edge_type = "root" if parent_id.startswith("root") else "extends"
