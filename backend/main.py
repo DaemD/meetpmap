@@ -12,6 +12,10 @@ import os
 import time
 from typing import Optional
 from contextlib import asynccontextmanager
+from pydantic import BaseModel
+import base64
+import tempfile
+import io
 
 from services.meetmap_service import MeetMapService
 from services.database import db
@@ -237,6 +241,136 @@ async def test_database():
         return JSONResponse(
             status_code=500,
             content={"status": "error", "message": str(e)}
+        )
+
+
+class TranscribeRequest(BaseModel):
+    """Request model for transcribe endpoint"""
+    audio: str  # Base64-encoded WAV audio
+    user_id: str
+    start: float
+    end: float
+
+
+@app.post("/api/transcribe")
+async def transcribe_audio(request: TranscribeRequest):
+    """
+    Transcribe audio using Whisper API and process it to extract nodes.
+    Returns only the transcription text (nodes are processed silently).
+    """
+    try:
+        # Validate inputs
+        if not request.audio or not request.audio.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "audio is required and cannot be empty"}
+            )
+        
+        if not request.user_id or not request.user_id.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "user_id is required"}
+            )
+        
+        audio_base64 = request.audio.strip()
+        user_id = request.user_id.strip()
+        start = request.start
+        end = request.end
+        
+        # Step 1: Decode base64 audio
+        try:
+            # Remove data URL prefix if present (e.g., "data:audio/wav;base64,")
+            if "," in audio_base64:
+                audio_base64 = audio_base64.split(",", 1)[1]
+            
+            audio_bytes = base64.b64decode(audio_base64)
+        except Exception as decode_error:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": f"Invalid base64 audio: {str(decode_error)}"}
+            )
+        
+        # Step 2: Create temporary file for Whisper API
+        # Whisper API requires a file, so we'll use a temporary file
+        temp_file_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
+                temp_file.write(audio_bytes)
+                temp_file_path = temp_file.name
+            
+            # Step 3: Call OpenAI Whisper API
+            print(f"[{time.strftime('%H:%M:%S')}] 🎤 Transcribing audio with Whisper (user: {user_id}, duration: {end - start:.2f}s)...")
+            whisper_start = time.time()
+            
+            with open(temp_file_path, "rb") as audio_file:
+                transcription_response = meetmap_service.client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    response_format="text"  # Get plain text response
+                )
+            
+            # Extract transcription text (handle both string and object responses)
+            if isinstance(transcription_response, str):
+                transcription = transcription_response.strip()
+            elif hasattr(transcription_response, 'text'):
+                transcription = transcription_response.text.strip()
+            else:
+                transcription = str(transcription_response).strip()
+            
+            whisper_elapsed = time.time() - whisper_start
+            print(f"[{time.strftime('%H:%M:%S')}] ✅ Transcription completed in {whisper_elapsed:.2f}s: {transcription[:50]}...")
+            
+            if not transcription or not transcription.strip():
+                return JSONResponse(
+                    status_code=400,
+                    content={"status": "error", "message": "Transcription is empty"}
+                )
+            
+            # Step 4: Process transcription internally using existing endpoint logic
+            # Create chunk dict matching TranscriptChunk format
+            chunk_dict = {
+                "text": transcription.strip(),
+                "start": start,
+                "end": end,
+                "user_id": user_id,
+                "speaker": None,  # Whisper doesn't do speaker diarization
+                "chunk_id": None
+            }
+            
+            # Call process_transcript_chunk function internally
+            # This will extract nodes and save them to database
+            print(f"[{time.strftime('%H:%M:%S')}] 🔄 Processing transcription to extract nodes...")
+            try:
+                await process_transcript_chunk(chunk_dict)
+                print(f"[{time.strftime('%H:%M:%S')}] ✅ Nodes extracted and saved to database")
+            except Exception as process_error:
+                # Log error but still return transcription
+                print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Error processing transcription: {process_error}")
+                # Continue to return transcription even if node extraction failed
+            
+            # Step 5: Return only transcription
+            return {
+                "status": "success",
+                "transcription": transcription.strip(),
+                "start": start,
+                "end": end
+            }
+            
+        finally:
+            # Clean up temporary file
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.unlink(temp_file_path)
+                except Exception as cleanup_error:
+                    print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Failed to cleanup temp file: {cleanup_error}")
+        
+    except Exception as e:
+        print(f"[{time.strftime('%H:%M:%S')}] ❌ Error in transcribe_audio: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"Failed to transcribe audio: {str(e)}"}
         )
 
 
@@ -538,96 +672,129 @@ async def get_graph_state(user_id: str = Query(..., description="User ID (requir
 
 
 
+class ChatRequest(BaseModel):
+    """Request model for chat endpoint"""
+    question: str
+    user_id: str
+    image: Optional[str] = None  # Base64-encoded image (optional)
+
 
 @app.post("/api/chat/ask")
-async def ask_meeting_assistant(
-    question: str = Body(..., description="User's question"),
-    user_id: str = Body(..., description="User ID")
-):
+async def ask_meeting_assistant(request: ChatRequest):
     """
     AI meeting assistant endpoint.
     Answers questions about the meeting or general knowledge helpful for meetings.
     Uses all node descriptions (summaries) from the user's graph as context.
+    Supports optional image input for vision-based questions.
     """
     try:
         # Validate inputs
-        if not question or not question.strip():
+        if not request.question or not request.question.strip():
             return JSONResponse(
                 status_code=400,
                 content={"status": "error", "message": "question is required and cannot be empty"}
             )
         
-        if not user_id or not user_id.strip():
+        if not request.user_id or not request.user_id.strip():
             return JSONResponse(
                 status_code=400,
                 content={"status": "error", "message": "user_id is required"}
             )
         
-        # Get all nodes for the user
-        all_nodes = await db.get_all_nodes(user_id)
+        question = request.question.strip()
+        user_id = request.user_id.strip()
         
-        if not all_nodes:
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "status": "error",
-                    "message": "No meeting context available yet. Please start a meeting first."
-                }
-            )
+        # Get all nodes for the user (optional - meeting context)
+        all_nodes = await db.get_all_nodes(user_id)
         
         # Extract summaries (descriptions) from nodes, skip root nodes
         node_descriptions = []
-        for node in all_nodes:
-            node_id = node['id']
-            summary = node.get('summary', '')
-            
-            # Skip root nodes
-            if node_id.startswith('root') or node_id == 'root':
-                continue
-            
-            # Skip empty summaries
-            if summary and summary.strip():
-                node_descriptions.append(summary.strip())
+        if all_nodes:
+            for node in all_nodes:
+                node_id = node['id']
+                summary = node.get('summary', '')
+                
+                # Skip root nodes
+                if node_id.startswith('root') or node_id == 'root':
+                    continue
+                
+                # Skip empty summaries
+                if summary and summary.strip():
+                    node_descriptions.append(summary.strip())
         
-        if not node_descriptions:
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "status": "error",
-                    "message": "No conversation content available yet. Please add some transcript chunks first."
-                }
-            )
+        # Build context string from node descriptions (if available)
+        context_text = ""
+        if node_descriptions:
+            context_text = "\n".join([
+                f"{i+1}. {desc}" 
+                for i, desc in enumerate(node_descriptions)
+            ])
         
-        # Build context string from node descriptions
-        context_text = "\n".join([
-            f"{i+1}. {desc}" 
-            for i, desc in enumerate(node_descriptions)
-        ])
-        
-        # Build prompt
-        prompt = f"""You are a meeting assistant. Users can ask questions about:
-- The meeting/conversation that has happened
-- General knowledge questions that might help in meetings
+        # Build prompt - handle both cases: with and without meeting context
+        if context_text:
+            prompt = f"""You are a helpful meeting assistant. The user may send you:
+- Questions about the meeting/conversation
+- Direct transcriptions from the meeting
+- General questions or requests
 
 Meeting Context (ideas discussed, in chronological order):
 {context_text}
 
-User Question: {question}
+User Input: {question}
 
-Provide a concise, to-the-point answer. If the question is about the meeting, 
-base your answer on the context above. If it's general knowledge, answer 
-directly but keep it relevant to meetings/collaboration."""
+Instructions:
+- If the input is about the meeting, use the context above to help answer
+- If it's a direct transcription, acknowledge it and provide relevant insights
+- If it's a general question, answer using your knowledge
+- If no meeting context is needed, answer directly
+- Be concise and to-the-point
+- Not every input will be a question - handle statements, transcriptions, and questions appropriately"""
+        else:
+            prompt = f"""You are a helpful meeting assistant. The user may send you:
+- Questions about meetings or collaboration
+- Direct transcriptions from meetings
+- General questions or requests
+
+User Input: {question}
+
+Instructions:
+- Answer using your general knowledge
+- If it's a direct transcription, acknowledge it and provide relevant insights
+- If it's a question, answer it directly
+- If it's a statement, acknowledge and respond appropriately
+- Be concise and to-the-point
+- Not every input will be a question - handle statements, transcriptions, and questions appropriately"""
         
-        # Call GPT-4o-mini
+        # Prepare user message content (text + optional image)
+        user_content = [{"type": "text", "text": prompt}]
+        
+        # Add image if provided
+        if request.image:
+            # Handle base64 image - accept with or without data URL prefix
+            image_data = request.image.strip()
+            
+            # If it already has data URL prefix, use as-is
+            if image_data.startswith("data:"):
+                image_url = image_data
+            else:
+                # Otherwise, assume it's raw base64 and add JPEG data URL prefix
+                image_url = f"data:image/jpeg;base64,{image_data}"
+            
+            user_content.append({
+                "type": "image_url",
+                "image_url": {"url": image_url}
+            })
+        
+        # Call GPT-4o-mini (supports vision)
         try:
             response = meetmap_service.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a helpful meeting assistant. Provide concise, to-the-point answers based on the meeting context when available, or answer general knowledge questions relevant to meetings."
+                        "content": "You are a helpful meeting assistant. You can receive questions, direct meeting transcriptions, or general requests. Use meeting context if available to help answer, otherwise use your general knowledge. If an image is provided, analyze it in the context of the input. Be concise and to-the-point. Not every input will be a question - handle statements, transcriptions, and questions appropriately."
                     },
-                    {"role": "user", "content": prompt}
+                    {"role": "user", "content": user_content}
                 ],
                 temperature=0.7,
                 max_tokens=500
