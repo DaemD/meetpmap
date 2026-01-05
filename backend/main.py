@@ -586,6 +586,7 @@ async def get_graph_state(user_id: str = Query(..., description="User ID (requir
         
         # Get all nodes filtered by user_id
         all_graph_nodes = await graph_manager.get_all_nodes(user_id=user_id)
+        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] get_graph_state: Found {len(all_graph_nodes)} nodes for user_id={user_id}")
         
         # Convert to frontend format using the service's conversion method
         from models.schemas import NodeData, EdgeData
@@ -654,11 +655,13 @@ async def get_graph_state(user_id: str = Query(..., description="User ID (requir
                 )
                 edges.append(edge)
         
-        return {
+        result = {
             "status": "success",
             "nodes": [node.model_dump() for node in nodes],
             "edges": [edge.model_dump() for edge in edges]
         }
+        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] get_graph_state: Returning {len(result['nodes'])} nodes, {len(result['edges'])} edges for user_id={user_id}")
+        return result
         
     except Exception as e:
         print(f"❌ Error getting graph state: {e}")
