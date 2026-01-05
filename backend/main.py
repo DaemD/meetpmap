@@ -90,7 +90,25 @@ async def lifespan(app: FastAPI):
                         other_statements.append(stmt)
                 
                 # Execute CREATE TABLE statements first
+                # IMPORTANT: Create meetings table FIRST (before graph_nodes, etc.) since they have foreign keys
                 print(f"[{time.strftime('%H:%M:%S')}] [*] Creating tables ({len(create_table_statements)} statements)...")
+                
+                # Sort statements to ensure meetings table is created first
+                def get_table_priority(stmt):
+                    stmt_upper = stmt.upper()
+                    if 'MEETINGS' in stmt_upper:
+                        return 0  # Highest priority
+                    elif 'USERS' in stmt_upper:
+                        return 1
+                    elif 'GRAPH_NODES' in stmt_upper or 'GRAPH_EDGES' in stmt_upper:
+                        return 2  # Depends on meetings
+                    elif 'CLUSTERS' in stmt_upper or 'CLUSTER_MEMBERS' in stmt_upper:
+                        return 3  # Depends on meetings
+                    else:
+                        return 4
+                
+                create_table_statements.sort(key=get_table_priority)
+                
                 for stmt in create_table_statements:
                     try:
                         await db.execute(stmt)
@@ -106,6 +124,7 @@ async def lifespan(app: FastAPI):
                             print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to create table: {e}")
                             # Show first 150 chars of statement for debugging
                             print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Statement: {stmt[:150]}...")
+                            # Don't raise - continue with other tables
                 
                 # Then execute indexes and other statements
                 if other_statements:
@@ -123,14 +142,38 @@ async def lifespan(app: FastAPI):
                                 else:
                                     print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Index/constraint may have failed: {stmt[:50]}... Error: {e}")
                 
-                # Verify tables
+                # Verify tables - especially check for meetings table
                 tables = await db.fetch("""
                     SELECT table_name 
                     FROM information_schema.tables 
                     WHERE table_schema = 'public'
                     ORDER BY table_name
                 """)
-                print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Database ready - {len(tables)} tables found")
+                table_names = [t['table_name'] for t in tables]
+                print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Database ready - {len(tables)} tables found: {', '.join(table_names)}")
+                
+                # Critical check: ensure meetings table exists
+                if 'meetings' not in table_names:
+                    print(f"[{time.strftime('%H:%M:%S')}] [ERROR] CRITICAL: meetings table not found after migration!")
+                    print(f"[{time.strftime('%H:%M:%S')}] [ERROR] This will cause API failures. Attempting to create meetings table manually...")
+                    try:
+                        await db.execute("""
+                            CREATE TABLE IF NOT EXISTS meetings (
+                                id VARCHAR(255) PRIMARY KEY,
+                                user_id VARCHAR(255) NOT NULL,
+                                title VARCHAR(255) NOT NULL DEFAULT 'Untitled Meeting',
+                                description TEXT,
+                                created_at TIMESTAMP DEFAULT NOW(),
+                                ended_at TIMESTAMP,
+                                metadata JSONB DEFAULT '{}'::jsonb
+                            )
+                        """)
+                        await db.execute("CREATE INDEX IF NOT EXISTS idx_meetings_user_id ON meetings(user_id)")
+                        await db.execute("CREATE INDEX IF NOT EXISTS idx_meetings_created_at ON meetings(created_at)")
+                        print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] meetings table created manually")
+                    except Exception as manual_create_error:
+                        print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to create meetings table manually: {manual_create_error}")
+                        raise RuntimeError("meetings table is required but could not be created")
             else:
                 print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Schema file not found, skipping migration")
         except Exception as migration_error:
