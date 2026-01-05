@@ -178,49 +178,66 @@ async def lifespan(app: FastAPI):
                 # Check if graph_nodes has meeting_id column (migration check)
                 try:
                     columns = await db.fetch("""
-                        SELECT column_name 
+                        SELECT column_name, is_nullable
                         FROM information_schema.columns 
                         WHERE table_schema = 'public' 
                         AND table_name = 'graph_nodes'
-                        AND column_name = 'meeting_id'
+                        AND column_name IN ('meeting_id', 'user_id')
                     """)
-                    has_meeting_id = len(columns) > 0
                     
-                    if not has_meeting_id:
-                        print(f"[{time.strftime('%H:%M:%S')}] [WARNING] graph_nodes table missing meeting_id column - running migration...")
-                        # Run migration: add meeting_id columns
-                        await db.execute("ALTER TABLE graph_nodes ADD COLUMN IF NOT EXISTS meeting_id VARCHAR(255)")
-                        await db.execute("ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS meeting_id VARCHAR(255)")
-                        await db.execute("ALTER TABLE clusters ADD COLUMN IF NOT EXISTS meeting_id VARCHAR(255)")
-                        await db.execute("ALTER TABLE cluster_members ADD COLUMN IF NOT EXISTS meeting_id VARCHAR(255)")
+                    has_meeting_id = any(col['column_name'] == 'meeting_id' for col in columns)
+                    user_id_info = next((col for col in columns if col['column_name'] == 'user_id'), None)
+                    user_id_is_nullable = user_id_info and user_id_info['is_nullable'] == 'YES'
+                    
+                    needs_migration = not has_meeting_id or (user_id_info and not user_id_is_nullable)
+                    
+                    if needs_migration:
+                        print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Running database migration to add meeting_id and make user_id nullable...")
                         
-                        # Make user_id nullable (if it exists) to allow migration
-                        try:
-                            await db.execute("ALTER TABLE graph_nodes ALTER COLUMN user_id DROP NOT NULL")
-                        except Exception:
-                            pass  # Column might not exist or already nullable
-                        try:
-                            await db.execute("ALTER TABLE graph_edges ALTER COLUMN user_id DROP NOT NULL")
-                        except Exception:
-                            pass
-                        try:
-                            await db.execute("ALTER TABLE clusters ALTER COLUMN user_id DROP NOT NULL")
-                        except Exception:
-                            pass
-                        try:
-                            await db.execute("ALTER TABLE cluster_members ALTER COLUMN user_id DROP NOT NULL")
-                        except Exception:
-                            pass
+                        # Run migration: add meeting_id columns if missing
+                        if not has_meeting_id:
+                            await db.execute("ALTER TABLE graph_nodes ADD COLUMN IF NOT EXISTS meeting_id VARCHAR(255)")
+                            await db.execute("ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS meeting_id VARCHAR(255)")
+                            await db.execute("ALTER TABLE clusters ADD COLUMN IF NOT EXISTS meeting_id VARCHAR(255)")
+                            await db.execute("ALTER TABLE cluster_members ADD COLUMN IF NOT EXISTS meeting_id VARCHAR(255)")
                         
-                        # Create indexes
-                        await db.execute("CREATE INDEX IF NOT EXISTS idx_graph_nodes_meeting_id ON graph_nodes(meeting_id)")
-                        await db.execute("CREATE INDEX IF NOT EXISTS idx_graph_edges_meeting_id ON graph_edges(meeting_id)")
-                        await db.execute("CREATE INDEX IF NOT EXISTS idx_clusters_meeting_id ON clusters(meeting_id)")
-                        await db.execute("CREATE INDEX IF NOT EXISTS idx_cluster_members_meeting_id ON cluster_members(meeting_id)")
+                        # Make user_id nullable (if it exists and is NOT NULL)
+                        if user_id_info and not user_id_is_nullable:
+                            print(f"[{time.strftime('%H:%M:%S')}] [*] Making user_id nullable in existing tables...")
+                            try:
+                                await db.execute("ALTER TABLE graph_nodes ALTER COLUMN user_id DROP NOT NULL")
+                                print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Made graph_nodes.user_id nullable")
+                            except Exception as e:
+                                print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Could not make graph_nodes.user_id nullable: {e}")
+                            
+                            try:
+                                await db.execute("ALTER TABLE graph_edges ALTER COLUMN user_id DROP NOT NULL")
+                                print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Made graph_edges.user_id nullable")
+                            except Exception as e:
+                                print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Could not make graph_edges.user_id nullable: {e}")
+                            
+                            try:
+                                await db.execute("ALTER TABLE clusters ALTER COLUMN user_id DROP NOT NULL")
+                                print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Made clusters.user_id nullable")
+                            except Exception as e:
+                                print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Could not make clusters.user_id nullable: {e}")
+                            
+                            try:
+                                await db.execute("ALTER TABLE cluster_members ALTER COLUMN user_id DROP NOT NULL")
+                                print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Made cluster_members.user_id nullable")
+                            except Exception as e:
+                                print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Could not make cluster_members.user_id nullable: {e}")
                         
-                        print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Added meeting_id columns to existing tables and made user_id nullable")
+                        # Create indexes for meeting_id if meeting_id was just added
+                        if not has_meeting_id:
+                            await db.execute("CREATE INDEX IF NOT EXISTS idx_graph_nodes_meeting_id ON graph_nodes(meeting_id)")
+                            await db.execute("CREATE INDEX IF NOT EXISTS idx_graph_edges_meeting_id ON graph_edges(meeting_id)")
+                            await db.execute("CREATE INDEX IF NOT EXISTS idx_clusters_meeting_id ON clusters(meeting_id)")
+                            await db.execute("CREATE INDEX IF NOT EXISTS idx_cluster_members_meeting_id ON cluster_members(meeting_id)")
+                        
+                        print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Database migration completed")
                     else:
-                        print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Database schema is up to date (meeting_id columns exist)")
+                        print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Database schema is up to date (meeting_id columns exist, user_id is nullable)")
                 except Exception as migration_error:
                     print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Migration check failed (may be expected): {migration_error}")
             else:
