@@ -15,18 +15,15 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- Meetings table
--- Each meeting contains its own graph (user_id is optional)
+-- Each meeting contains its own graph
 CREATE TABLE IF NOT EXISTS meetings (
     id VARCHAR(255) PRIMARY KEY,
-    user_id VARCHAR(255),
     title VARCHAR(255) NOT NULL DEFAULT 'Untitled Meeting',
     description TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
     ended_at TIMESTAMP,
     metadata JSONB DEFAULT '{}'::jsonb
 );
-
-CREATE INDEX IF NOT EXISTS idx_meetings_user_id ON meetings(user_id);
 CREATE INDEX IF NOT EXISTS idx_meetings_created_at ON meetings(created_at);
 
 -- Graph nodes table
@@ -121,15 +118,11 @@ CREATE INDEX IF NOT EXISTS idx_cluster_members_meeting_id ON cluster_members(mee
 -- Graphs table (kept for compatibility, but not used in v2)
 CREATE TABLE IF NOT EXISTS graphs (
     id VARCHAR(255) PRIMARY KEY,
-    user_id VARCHAR(255) NOT NULL,
     name VARCHAR(255) NOT NULL DEFAULT 'Untitled Graph',
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     metadata JSONB DEFAULT '{}'::jsonb
 );
-
--- Index for graphs
-CREATE INDEX IF NOT EXISTS idx_graphs_user_id ON graphs(user_id);
 
 -- Comments for documentation
 COMMENT ON TABLE meetings IS 'Stores meeting metadata - each meeting belongs to a user and contains its own graph';

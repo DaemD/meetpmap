@@ -228,6 +228,26 @@ async def lifespan(app: FastAPI):
                             except Exception as e:
                                 print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Could not make cluster_members.user_id nullable: {e}")
                         
+                        # Drop user_id columns from all tables (no longer needed)
+                        print(f"[{time.strftime('%H:%M:%S')}] [*] Dropping user_id columns from all tables...")
+                        tables_to_clean = ['graph_nodes', 'graph_edges', 'clusters', 'cluster_members', 'meetings', 'graphs']
+                        for table_name in tables_to_clean:
+                            try:
+                                # Check if column exists
+                                col_check = await db.fetchrow("""
+                                    SELECT column_name
+                                    FROM information_schema.columns 
+                                    WHERE table_schema = 'public' 
+                                    AND table_name = $1
+                                    AND column_name = 'user_id'
+                                """, table_name)
+                                
+                                if col_check:
+                                    await db.execute(f"ALTER TABLE {table_name} DROP COLUMN IF EXISTS user_id")
+                                    print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Dropped user_id from {table_name}")
+                            except Exception as e:
+                                print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Could not drop user_id from {table_name}: {e}")
+                        
                         # Fix clusters table - drop and recreate if primary key is wrong
                         try:
                             pk_constraint = await db.fetch("""
