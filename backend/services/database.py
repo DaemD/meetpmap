@@ -235,22 +235,29 @@ class Database:
         embedding_json = json.dumps(embedding)
         metadata_json = json.dumps(metadata)
         
-        await self.execute(
-            """
-            INSERT INTO graph_nodes (id, user_id, embedding, summary, parent_id, depth, metadata)
-            VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7::jsonb)
-            ON CONFLICT (id) DO UPDATE SET
-                embedding = EXCLUDED.embedding,
-                summary = EXCLUDED.summary,
-                parent_id = EXCLUDED.parent_id,
-                depth = EXCLUDED.depth,
-                metadata = EXCLUDED.metadata,
-                last_updated = NOW()
-            """,
-            node_id, user_id, embedding_json, summary, parent_id, depth, metadata_json
-        )
-        
-        return "Node saved"
+        import time
+        try:
+            await self.execute(
+                """
+                INSERT INTO graph_nodes (id, user_id, embedding, summary, parent_id, depth, metadata)
+                VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7::jsonb)
+                ON CONFLICT (id) DO UPDATE SET
+                    embedding = EXCLUDED.embedding,
+                    summary = EXCLUDED.summary,
+                    parent_id = EXCLUDED.parent_id,
+                    depth = EXCLUDED.depth,
+                    metadata = EXCLUDED.metadata,
+                    last_updated = NOW()
+                """,
+                node_id, user_id, embedding_json, summary, parent_id, depth, metadata_json
+            )
+            print(f"[{time.strftime('%H:%M:%S')}] [DB] Saved node: {node_id} for user_id={user_id}")
+            return "Node saved"
+        except Exception as e:
+            print(f"[{time.strftime('%H:%M:%S')}] [DB ERROR] Failed to save node {node_id} for user_id={user_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     # ============================================
     # Edge Methods (with user_id filtering)

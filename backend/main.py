@@ -341,11 +341,22 @@ async def transcribe_audio(request: TranscribeRequest):
             # This will extract nodes and save them to database
             print(f"[{time.strftime('%H:%M:%S')}] 🔄 Processing transcription to extract nodes...")
             try:
-                await process_transcript_chunk(chunk_dict)
-                print(f"[{time.strftime('%H:%M:%S')}] ✅ Nodes extracted and saved to database")
+                result = await process_transcript_chunk(chunk_dict)
+                # Check if it's a JSONResponse (error) or dict (success)
+                if isinstance(result, JSONResponse):
+                    print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Error processing transcription: {result.body}")
+                else:
+                    nodes_count = len(result.get('nodes', []))
+                    edges_count = len(result.get('edges', []))
+                    print(f"[{time.strftime('%H:%M:%S')}] ✅ Nodes extracted: {nodes_count} nodes, {edges_count} edges")
+                    # Verify nodes were actually saved to database
+                    saved_nodes = await db.get_all_nodes(user_id)
+                    print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Verified: {len(saved_nodes)} nodes in database for user_id={user_id}")
             except Exception as process_error:
                 # Log error but still return transcription
                 print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Error processing transcription: {process_error}")
+                import traceback
+                traceback.print_exc()
                 # Continue to return transcription even if node extraction failed
             
             # Step 5: Return only transcription
@@ -586,7 +597,9 @@ async def get_graph_state(user_id: str = Query(..., description="User ID (requir
         
         # Get all nodes filtered by user_id
         all_graph_nodes = await graph_manager.get_all_nodes(user_id=user_id)
+        node_ids = [node.id for node in all_graph_nodes]
         print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] get_graph_state: Found {len(all_graph_nodes)} nodes for user_id={user_id}")
+        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] get_graph_state: Node IDs: {node_ids}")
         
         # Convert to frontend format using the service's conversion method
         from models.schemas import NodeData, EdgeData
