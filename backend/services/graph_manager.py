@@ -1,7 +1,7 @@
 """
 Graph Manager - Manages the semantic idea-evolution graph
 Uses PostgreSQL database for persistent storage
-All operations are async and require user_id for multi-user isolation
+All operations are async and require meeting_id for meeting-based isolation
 """
 
 from typing import Dict, Optional, List, Any
@@ -60,36 +60,30 @@ class GraphManager:
             metadata=metadata or {}
         )
     
-    async def _get_children_ids(self, node_id: str, user_id: str) -> List[str]:
+    async def _get_children_ids(self, node_id: str, meeting_id: str) -> List[str]:
         """Get children IDs for a node from database"""
-        children = await db.get_children(node_id, user_id)
+        children = await db.get_children(node_id, meeting_id)
         return [child['id'] for child in children]
     
-    async def _initialize_root(self, user_id: Optional[str] = None):
-        """Create root node in database, optionally for a specific user"""
-        if user_id:
-            root_id = f"root_{user_id}"
-        else:
-            root_id = "root"
-            self.root_id = root_id
+    async def _initialize_root(self, meeting_id: str):
+        """Create root node in database for a specific meeting"""
+        root_id = f"root_meeting_{meeting_id}"
         
         # Check if root already exists
-        existing_root = await db.get_node(root_id, user_id if user_id else "system")
+        existing_root = await db.get_node(root_id, meeting_id)
         if existing_root:
-            print(f"[*] Root node already exists: {root_id}" + (f" (user: {user_id})" if user_id else ""))
+            print(f"[*] Root node already exists: {root_id} (meeting: {meeting_id})")
             return
         
         # Create a generic placeholder embedding (zero vector)
         placeholder_embedding = [0.0] * 384  # Default size for all-MiniLM-L6-v2
         
-        root_metadata = {"is_root": True}
-        if user_id:
-            root_metadata["user_id"] = user_id
+        root_metadata = {"is_root": True, "meeting_id": meeting_id}
         
         # Save root to database
         await db.save_node(
             node_id=root_id,
-            user_id=user_id if user_id else "system",
+            meeting_id=meeting_id,
             embedding=placeholder_embedding,
             summary="Meeting Start",
             parent_id=None,
@@ -97,53 +91,48 @@ class GraphManager:
             metadata=root_metadata
         )
         
-        print(f"[*] Graph initialized with root node: {root_id}" + (f" (user: {user_id})" if user_id else ""))
+        print(f"[*] Graph initialized with root node: {root_id} (meeting: {meeting_id})")
     
-    async def get_node(self, node_id: str, user_id: str) -> Optional[GraphNode]:
+    async def get_node(self, node_id: str, meeting_id: str) -> Optional[GraphNode]:
         """Get node by ID from database"""
-        record = await db.get_node(node_id, user_id)
+        record = await db.get_node(node_id, meeting_id)
         if not record:
             return None
         
         node = self._record_to_graph_node(record)
         if node:
             # Load children_ids
-            node.children_ids = await self._get_children_ids(node_id, user_id)
+            node.children_ids = await self._get_children_ids(node_id, meeting_id)
         return node
     
-    async def get_root(self, user_id: Optional[str] = None) -> Optional[GraphNode]:
-        """Get root node from database, optionally for a specific user"""
-        if user_id is None:
-            if not self.root_id:
-                self.root_id = "root"
-            record = await db.get_node(self.root_id, "system")
-        else:
-            user_root_id = f"root_{user_id}"
-            record = await db.get_root_node(user_id)
+    async def get_root(self, meeting_id: str) -> Optional[GraphNode]:
+        """Get root node from database for a specific meeting"""
+        if meeting_id is None:
+            raise ValueError("meeting_id is required")
+        
+        meeting_root_id = f"root_meeting_{meeting_id}"
+        record = await db.get_root_node(meeting_id)
         
         if not record:
             # Root doesn't exist, create it
-            await self._initialize_root(user_id)
-            if user_id:
-                record = await db.get_root_node(user_id)
-            else:
-                record = await db.get_node("root", "system")
+            await self._initialize_root(meeting_id)
+            record = await db.get_root_node(meeting_id)
         
         if record:
             node = self._record_to_graph_node(record)
             if node:
-                node.children_ids = await self._get_children_ids(node.id, user_id if user_id else "system")
+                node.children_ids = await self._get_children_ids(node.id, meeting_id)
             return node
         return None
     
-    async def get_children(self, node_id: str, user_id: str) -> List[GraphNode]:
+    async def get_children(self, node_id: str, meeting_id: str) -> List[GraphNode]:
         """Get all children of a node from database"""
-        children_records = await db.get_children(node_id, user_id)
+        children_records = await db.get_children(node_id, meeting_id)
         children = []
         for record in children_records:
             node = self._record_to_graph_node(record)
             if node:
-                node.children_ids = await self._get_children_ids(node.id, user_id)
+                node.children_ids = await self._get_children_ids(node.id, meeting_id)
                 children.append(node)
         return children
     
@@ -153,7 +142,7 @@ class GraphManager:
         embedding: List[float],
         summary: str,
         parent_id: str,
-        user_id: str,
+        meeting_id: str,
         metadata: dict = None
     ) -> GraphNode:
         """
@@ -164,29 +153,29 @@ class GraphManager:
             embedding: Vector representation
             summary: Text description
             parent_id: Parent node ID
-            user_id: User ID (required)
+            meeting_id: Meeting ID (required)
             metadata: Additional data
         """
         # Verify parent exists
-        parent = await self.get_node(parent_id, user_id)
+        parent = await self.get_node(parent_id, meeting_id)
         if not parent:
-            raise ValueError(f"Parent node {parent_id} does not exist for user {user_id}")
+            raise ValueError(f"Parent node {parent_id} does not exist for meeting {meeting_id}")
         
         # Calculate depth
         depth = parent.depth + 1
         
         # Prepare metadata
         node_metadata = metadata or {}
-        if 'user_id' not in node_metadata:
-            node_metadata['user_id'] = user_id
+        if 'meeting_id' not in node_metadata:
+            node_metadata['meeting_id'] = meeting_id
         
         # Save node to database
         import time
-        print(f"[{time.strftime('%H:%M:%S')}] [GRAPH_MANAGER] About to save node: {node_id} for user_id={user_id}")
+        print(f"[{time.strftime('%H:%M:%S')}] [GRAPH_MANAGER] About to save node: {node_id} for meeting_id={meeting_id}")
         try:
             await db.save_node(
                 node_id=node_id,
-                user_id=user_id,
+                meeting_id=meeting_id,
                 embedding=embedding,
                 summary=summary,
                 parent_id=parent_id,
@@ -205,7 +194,7 @@ class GraphManager:
         await db.save_edge(
             from_node=parent_id,
             to_node=node_id,
-            user_id=user_id,
+            meeting_id=meeting_id,
             edge_type=edge_type,
             strength=1.0,
             metadata={"relationship": "parent_child"}
@@ -214,7 +203,7 @@ class GraphManager:
         print(f"  [*] Added node: {node_id} (depth={depth}, parent={parent_id})")
         
         # Incrementally assign node to cluster (threshold-based)
-        await self._assign_to_cluster(node_id, embedding, user_id)
+        await self._assign_to_cluster(node_id, embedding, meeting_id)
         
         # Create and return GraphNode object
         node = GraphNode(
@@ -230,7 +219,7 @@ class GraphManager:
         
         return node
     
-    async def _assign_to_cluster(self, node_id: str, embedding: List[float], user_id: str):
+    async def _assign_to_cluster(self, node_id: str, embedding: List[float], meeting_id: str):
         """
         Incrementally assign a new node to an existing cluster or create a new one
         Uses threshold-based approach: if similarity to any centroid >= threshold, join that cluster
@@ -239,25 +228,25 @@ class GraphManager:
         Args:
             node_id: ID of the node to assign
             embedding: Embedding vector of the node
-            user_id: User ID (required)
+            meeting_id: Meeting ID (required)
         """
-        # Get all clusters for this user
-        clusters = await db.get_clusters(user_id)
+        # Get all clusters for this meeting
+        clusters = await db.get_clusters(meeting_id)
         
         if len(clusters) == 0:
             # Create first cluster
-            cluster_id = await db.get_next_cluster_id(user_id)
+            cluster_id = await db.get_next_cluster_id(meeting_id)
             color = self.get_cluster_color(cluster_id)
-            await db.save_cluster(cluster_id, user_id, embedding.copy(), color)
-            await db.add_cluster_member(cluster_id, node_id, user_id)
+            await db.save_cluster(cluster_id, meeting_id, embedding.copy(), color)
+            await db.add_cluster_member(cluster_id, node_id, meeting_id)
             
             # Update node metadata
-            node = await self.get_node(node_id, user_id)
+            node = await self.get_node(node_id, meeting_id)
             if node:
                 node.metadata["cluster_id"] = cluster_id
                 await db.save_node(
                     node_id=node_id,
-                    user_id=user_id,
+                    meeting_id=meeting_id,
                     embedding=node.embedding,
                     summary=node.summary,
                     parent_id=node.parent_id,
@@ -286,15 +275,15 @@ class GraphManager:
         if best_similarity >= self.CLUSTER_SIMILARITY_THRESHOLD:
             # Assign to existing cluster
             cluster_id = best_cluster_id
-            await db.add_cluster_member(cluster_id, node_id, user_id)
+            await db.add_cluster_member(cluster_id, node_id, meeting_id)
             
             # Update node metadata
-            node = await self.get_node(node_id, user_id)
+            node = await self.get_node(node_id, meeting_id)
             if node:
                 node.metadata["cluster_id"] = cluster_id
                 await db.save_node(
                     node_id=node_id,
-                    user_id=user_id,
+                    meeting_id=meeting_id,
                     embedding=node.embedding,
                     summary=node.summary,
                     parent_id=node.parent_id,
@@ -303,24 +292,24 @@ class GraphManager:
                 )
             
             # Update centroid (running average)
-            await self._update_centroid(cluster_id, embedding, user_id)
+            await self._update_centroid(cluster_id, embedding, meeting_id)
             
             print(f"  [*] Assigned node {node_id} to cluster {cluster_id} (similarity: {best_similarity:.3f})")
         else:
             # Create new cluster
-            next_cluster_id = await db.get_next_cluster_id(user_id)
+            next_cluster_id = await db.get_next_cluster_id(meeting_id)
             cluster_id = next_cluster_id
             color = self.get_cluster_color(cluster_id)
-            await db.save_cluster(cluster_id, user_id, embedding.copy(), color)
-            await db.add_cluster_member(cluster_id, node_id, user_id)
+            await db.save_cluster(cluster_id, meeting_id, embedding.copy(), color)
+            await db.add_cluster_member(cluster_id, node_id, meeting_id)
             
             # Update node metadata
-            node = await self.get_node(node_id, user_id)
+            node = await self.get_node(node_id, meeting_id)
             if node:
                 node.metadata["cluster_id"] = cluster_id
                 await db.save_node(
                     node_id=node_id,
-                    user_id=user_id,
+                    meeting_id=meeting_id,
                     embedding=node.embedding,
                     summary=node.summary,
                     parent_id=node.parent_id,
@@ -330,7 +319,7 @@ class GraphManager:
             
             print(f"  [*] Created new cluster {cluster_id} for node {node_id} (best similarity: {best_similarity:.3f} < {self.CLUSTER_SIMILARITY_THRESHOLD})")
     
-    async def _update_centroid(self, cluster_id: int, new_embedding: List[float], user_id: str):
+    async def _update_centroid(self, cluster_id: int, new_embedding: List[float], meeting_id: str):
         """
         Update cluster centroid using running average
         New centroid = (old_centroid * (n-1) + new_embedding) / n
@@ -338,9 +327,9 @@ class GraphManager:
         Args:
             cluster_id: ID of the cluster to update
             new_embedding: Embedding of the newly added node
-            user_id: User ID (required)
+            meeting_id: Meeting ID (required)
         """
-        cluster = await db.get_cluster(cluster_id, user_id)
+        cluster = await db.get_cluster(cluster_id, meeting_id)
         if not cluster:
             return
         
@@ -349,7 +338,7 @@ class GraphManager:
         old_centroid = json.loads(centroid_json) if isinstance(centroid_json, str) else centroid_json
         
         # Get cluster member count
-        members = await db.get_cluster_members(cluster_id, user_id)
+        members = await db.get_cluster_members(cluster_id, meeting_id)
         n = len(members)
         
         if n == 0:
@@ -362,7 +351,7 @@ class GraphManager:
         
         # Update in database
         color = cluster.get('color') or self.get_cluster_color(cluster_id)
-        await db.save_cluster(cluster_id, user_id, new_centroid.tolist(), color)
+        await db.save_cluster(cluster_id, meeting_id, new_centroid.tolist(), color)
     
     def get_cluster_color(self, cluster_id: int) -> str:
         """
@@ -423,40 +412,40 @@ class GraphManager:
         is_match = best_similarity >= threshold
         return best_id, best_similarity, is_match
     
-    async def get_all_nodes(self, user_id: Optional[str] = None) -> List[GraphNode]:
-        """Get all nodes in the graph from database, filtered by user_id"""
-        if user_id is None:
-            raise ValueError("user_id is required for database operations")
+    async def get_all_nodes(self, meeting_id: str) -> List[GraphNode]:
+        """Get all nodes in the graph from database, filtered by meeting_id"""
+        if meeting_id is None:
+            raise ValueError("meeting_id is required for database operations")
         
-        records = await db.get_all_nodes(user_id)
+        records = await db.get_all_nodes(meeting_id)
         nodes = []
         for record in records:
             node = self._record_to_graph_node(record)
             if node:
-                node.children_ids = await self._get_children_ids(node.id, user_id)
+                node.children_ids = await self._get_children_ids(node.id, meeting_id)
                 nodes.append(node)
         return nodes
     
-    async def get_all_nodes_except_root(self, user_id: Optional[str] = None) -> List[GraphNode]:
-        """Get all nodes except root from database, filtered by user_id"""
-        if user_id is None:
-            raise ValueError("user_id is required for database operations")
+    async def get_all_nodes_except_root(self, meeting_id: str) -> List[GraphNode]:
+        """Get all nodes except root from database, filtered by meeting_id"""
+        if meeting_id is None:
+            raise ValueError("meeting_id is required for database operations")
         
-        all_nodes = await self.get_all_nodes(user_id)
-        user_root_id = f"root_{user_id}"
-        return [node for node in all_nodes if node.id != user_root_id]
+        all_nodes = await self.get_all_nodes(meeting_id)
+        meeting_root_id = f"root_meeting_{meeting_id}"
+        return [node for node in all_nodes if node.id != meeting_root_id]
     
-    async def get_all_edges(self, user_id: str) -> List[dict]:
+    async def get_all_edges(self, meeting_id: str) -> List[dict]:
         """
         Get all edges in the graph from database
         
         Args:
-            user_id: User ID (required)
+            meeting_id: Meeting ID (required)
         
         Returns:
             List of edge dictionaries with from_node, to_node, type, strength, metadata
         """
-        edge_records = await db.get_edges(user_id)
+        edge_records = await db.get_edges(meeting_id)
         edges = []
         for record in edge_records:
             edge = {
@@ -469,23 +458,23 @@ class GraphManager:
             edges.append(edge)
         return edges
     
-    async def get_recent_chunk_nodes(self, num_chunks: int = 5, user_id: Optional[str] = None) -> List[tuple[str, List[GraphNode]]]:
+    async def get_recent_chunk_nodes(self, num_chunks: int = 5, meeting_id: Optional[str] = None) -> List[tuple[str, List[GraphNode]]]:
         """
         Get nodes from the most recent N chunks, grouped by chunk_id
         
         Args:
             num_chunks: Number of recent chunks to retrieve (default: 5)
-            user_id: User ID (required)
+            meeting_id: Meeting ID (required)
         
         Returns:
             List of (chunk_id, [nodes]) tuples, ordered by chunk timestamp (oldest first)
             chunk_id will be "unknown" if not set in metadata
         """
-        if user_id is None:
-            raise ValueError("user_id is required for database operations")
+        if meeting_id is None:
+            raise ValueError("meeting_id is required for database operations")
         
         # Get all nodes except root
-        all_nodes = await self.get_all_nodes_except_root(user_id)
+        all_nodes = await self.get_all_nodes_except_root(meeting_id)
         
         # Group nodes by chunk_id (use "unknown" as fallback)
         nodes_by_chunk: dict[str, List[GraphNode]] = {}
@@ -525,13 +514,13 @@ class GraphManager:
         
         return result
     
-    async def get_node_path(self, node_id: str, user_id: str) -> List[str]:
+    async def get_node_path(self, node_id: str, meeting_id: str) -> List[str]:
         """Get path from root to node (for LLM context)"""
         path = []
-        current = await self.get_node(node_id, user_id)
+        current = await self.get_node(node_id, meeting_id)
         while current and current.parent_id:
             path.insert(0, current.id)
-            current = await self.get_node(current.parent_id, user_id)
+            current = await self.get_node(current.parent_id, meeting_id)
         return path
     
     async def find_globally_similar_nodes(
@@ -539,7 +528,7 @@ class GraphManager:
         candidate_embedding: List[float],
         exclude_node_id: Optional[str] = None,
         filter_by_threshold: bool = False,
-        user_id: Optional[str] = None
+        meeting_id: Optional[str] = None
     ) -> List[tuple[str, float, GraphNode]]:
         """
         Find top-K most similar nodes in entire graph from database
@@ -548,15 +537,15 @@ class GraphManager:
             candidate_embedding: Embedding to compare against
             exclude_node_id: Node ID to exclude from search
             filter_by_threshold: If True, only return nodes >= SIMILARITY_THRESHOLD
-            user_id: User ID (required)
+            meeting_id: Meeting ID (required)
         
         Returns:
             List of (node_id, similarity, node) tuples, sorted by similarity descending
         """
-        if user_id is None:
-            raise ValueError("user_id is required for database operations")
+        if meeting_id is None:
+            raise ValueError("meeting_id is required for database operations")
         
-        all_nodes = await self.get_all_nodes_except_root(user_id=user_id)
+        all_nodes = await self.get_all_nodes_except_root(meeting_id=meeting_id)
         if exclude_node_id:
             all_nodes = [n for n in all_nodes if n.id != exclude_node_id]
         
@@ -579,14 +568,14 @@ class GraphManager:
         # Return top-K (or all if fewer than K)
         return similarities[:top_k]
     
-    async def get_downward_paths(self, node_id: str, user_id: str) -> dict:
+    async def get_downward_paths(self, node_id: str, meeting_id: str) -> dict:
         """
         Get all paths from node to its last children (leaf nodes)
         Uses DFS to find all paths to leaf nodes
         
         Args:
             node_id: Starting node ID
-            user_id: User ID (required)
+            meeting_id: Meeting ID (required)
         
         Returns:
             {
@@ -596,7 +585,7 @@ class GraphManager:
             }
         """
         async def find_leaf_paths(current_id, current_path):
-            current_node = await self.get_node(current_id, user_id)
+            current_node = await self.get_node(current_id, meeting_id)
             if not current_node:
                 return []
             
@@ -630,13 +619,13 @@ class GraphManager:
             "last_children": list(set(last_children))
         }
     
-    async def get_path_to_root(self, node_id: str, user_id: str) -> dict:
+    async def get_path_to_root(self, node_id: str, meeting_id: str) -> dict:
         """
         Get path from node to root (backtracking)
         
         Args:
             node_id: Starting node ID
-            user_id: User ID (required)
+            meeting_id: Meeting ID (required)
         
         Returns:
             {
@@ -645,13 +634,13 @@ class GraphManager:
             }
         """
         path = []
-        current = await self.get_node(node_id, user_id)
+        current = await self.get_node(node_id, meeting_id)
         
         # Backtrack to root
         while current:
             path.insert(0, current.id)
             if current.parent_id:
-                current = await self.get_node(current.parent_id, user_id)
+                current = await self.get_node(current.parent_id, meeting_id)
             else:
                 break
         
@@ -660,13 +649,13 @@ class GraphManager:
             "all_nodes": path
         }
     
-    async def calculate_maturity(self, node_id: str, user_id: str) -> dict:
+    async def calculate_maturity(self, node_id: str, meeting_id: str) -> dict:
         """
         Calculate maturity score for a node
         
         Args:
             node_id: Node ID
-            user_id: User ID (required)
+            meeting_id: Meeting ID (required)
         
         Returns:
             {
@@ -678,13 +667,13 @@ class GraphManager:
                 }
             }
         """
-        node = await self.get_node(node_id, user_id)
+        node = await self.get_node(node_id, meeting_id)
         if not node:
             return {"score": 0, "breakdown": {}}
         
         # Count all descendants
         async def count_descendants(n_id):
-            n = await self.get_node(n_id, user_id)
+            n = await self.get_node(n_id, meeting_id)
             if not n:
                 return 0
             count = len(n.children_ids)
@@ -711,13 +700,13 @@ class GraphManager:
             }
         }
     
-    async def calculate_influence(self, node_id: str, user_id: str) -> dict:
+    async def calculate_influence(self, node_id: str, meeting_id: str) -> dict:
         """
         Calculate influence score for a node
         
         Args:
             node_id: Node ID
-            user_id: User ID (required)
+            meeting_id: Meeting ID (required)
         
         Returns:
             {
@@ -726,13 +715,13 @@ class GraphManager:
                 "indirect": int (all descendants)
             }
         """
-        node = await self.get_node(node_id, user_id)
+        node = await self.get_node(node_id, meeting_id)
         if not node:
             return {"score": 0, "direct": 0, "indirect": 0}
         
         # Count all descendants (direct + indirect)
         async def count_all_descendants(n_id):
-            n = await self.get_node(n_id, user_id)
+            n = await self.get_node(n_id, meeting_id)
             if not n:
                 return 0
             total = len(n.children_ids)  # Direct children
@@ -753,21 +742,21 @@ class GraphManager:
             "indirect": indirect
         }
     
-    async def reset(self, user_id: Optional[str] = None):
-        """Reset graph for a user (delete all nodes) - WARNING: This deletes data!"""
-        if user_id is None:
-            raise ValueError("user_id is required for database operations")
+    async def reset(self, meeting_id: Optional[str] = None):
+        """Reset graph for a meeting (delete all nodes) - WARNING: This deletes data!"""
+        if meeting_id is None:
+            raise ValueError("meeting_id is required for database operations")
         
-        # Delete all nodes for user (cascade will delete edges and cluster members)
+        # Delete all nodes for meeting (cascade will delete edges and cluster members)
         await db.execute(
-            "DELETE FROM graph_nodes WHERE user_id = $1",
-            user_id
+            "DELETE FROM graph_nodes WHERE meeting_id = $1",
+            meeting_id
         )
         
-        # Delete clusters for user
+        # Delete clusters for meeting
         await db.execute(
-            "DELETE FROM clusters WHERE user_id = $1",
-            user_id
+            "DELETE FROM clusters WHERE meeting_id = $1",
+            meeting_id
         )
         
-        print(f"[*] Graph reset for user: {user_id}")
+        print(f"[*] Graph reset for meeting: {meeting_id}")

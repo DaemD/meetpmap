@@ -14,7 +14,7 @@ class TranscriptChunk(BaseModel):
     end: float
     text: str
     chunk_id: Optional[str] = None
-    user_id: Optional[str] = None  # User identifier for multi-user support
+    meeting_id: Optional[str] = None  # Meeting identifier - required for meeting-based isolation
 
 
 class TopicData(BaseModel):

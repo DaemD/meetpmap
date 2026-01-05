@@ -244,12 +244,64 @@ async def test_database():
         )
 
 
+class MeetingCreateRequest(BaseModel):
+    """Request model for creating a meeting"""
+    user_id: str  # User who owns the meeting
+    title: str = "Untitled Meeting"
+    description: Optional[str] = None
+
+
 class TranscribeRequest(BaseModel):
     """Request model for transcribe endpoint"""
     audio: str  # Base64-encoded WAV audio
-    user_id: str
+    meeting_id: str  # Meeting ID (required)
     start: float
     end: float
+
+
+@app.post("/api/meetings")
+async def create_meeting(request: MeetingCreateRequest):
+    """Create a new meeting"""
+    try:
+        if not request.user_id or not request.user_id.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "user_id is required"}
+            )
+        
+        # Generate meeting ID
+        import uuid
+        meeting_id = f"meeting_{uuid.uuid4().hex[:12]}"
+        
+        # Create meeting in database
+        await db.create_meeting(
+            meeting_id=meeting_id,
+            user_id=request.user_id.strip(),
+            title=request.title.strip() if request.title else "Untitled Meeting",
+            description=request.description.strip() if request.description else None
+        )
+        
+        # Get the created meeting
+        meeting = await db.get_meeting(meeting_id)
+        
+        return {
+            "status": "success",
+            "meeting": {
+                "id": meeting['id'],
+                "user_id": meeting['user_id'],
+                "title": meeting['title'],
+                "description": meeting.get('description'),
+                "created_at": meeting['created_at'].isoformat() if hasattr(meeting['created_at'], 'isoformat') else str(meeting['created_at'])
+            }
+        }
+    except Exception as e:
+        print(f"[ERROR] Error creating meeting: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"Failed to create meeting: {str(e)}"}
+        )
 
 
 @app.post("/api/transcribe")
@@ -266,16 +318,24 @@ async def transcribe_audio(request: TranscribeRequest, background_tasks: Backgro
                 content={"status": "error", "message": "audio is required and cannot be empty"}
             )
         
-        if not request.user_id or not request.user_id.strip():
+        if not request.meeting_id or not request.meeting_id.strip():
             return JSONResponse(
                 status_code=400,
-                content={"status": "error", "message": "user_id is required"}
+                content={"status": "error", "message": "meeting_id is required"}
             )
         
         audio_base64 = request.audio.strip()
-        user_id = request.user_id.strip()
+        meeting_id = request.meeting_id.strip()
         start = request.start
         end = request.end
+        
+        # Verify meeting exists
+        meeting = await db.get_meeting(meeting_id)
+        if not meeting:
+            return JSONResponse(
+                status_code=404,
+                content={"status": "error", "message": f"Meeting {meeting_id} not found"}
+            )
         
         # Step 1: Decode base64 audio
         try:
@@ -299,7 +359,7 @@ async def transcribe_audio(request: TranscribeRequest, background_tasks: Backgro
                 temp_file_path = temp_file.name
             
             # Step 3: Call OpenAI Whisper API
-            print(f"[{time.strftime('%H:%M:%S')}] 🎤 Transcribing audio with Whisper (user: {user_id}, duration: {end - start:.2f}s)...")
+            print(f"[{time.strftime('%H:%M:%S')}] 🎤 Transcribing audio with Whisper (meeting: {meeting_id}, duration: {end - start:.2f}s)...")
             whisper_start = time.time()
             
             with open(temp_file_path, "rb") as audio_file:
@@ -343,7 +403,7 @@ async def transcribe_audio(request: TranscribeRequest, background_tasks: Backgro
                         "text": transcription.strip(),
                         "start": start,
                         "end": end,
-                        "user_id": user_id,
+                        "meeting_id": meeting_id,
                         "speaker": None,  # Whisper doesn't do speaker diarization
                         "chunk_id": None
                     }
@@ -356,8 +416,8 @@ async def transcribe_audio(request: TranscribeRequest, background_tasks: Backgro
                         edges_count = len(result.get('edges', []))
                         print(f"[{time.strftime('%H:%M:%S')}] ✅ Nodes extracted: {nodes_count} nodes, {edges_count} edges")
                         # Verify nodes were actually saved to database
-                        saved_nodes = await db.get_all_nodes(user_id)
-                        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Verified: {len(saved_nodes)} nodes in database for user_id={user_id}")
+                        saved_nodes = await db.get_all_nodes(meeting_id)
+                        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Verified: {len(saved_nodes)} nodes in database for meeting_id={meeting_id}")
                 except Exception as process_error:
                     print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Error processing transcription: {process_error}")
                     import traceback
@@ -400,8 +460,7 @@ async def process_transcript_chunk(chunk: dict):
         
         transcript_chunk = TranscriptChunk(**chunk)
         
-        # Note: user_id is optional - if not provided, nodes are shared across all users
-        # If user_id is provided, nodes are isolated per user
+        # Note: meeting_id is required - nodes are isolated per meeting
         
         # Extract nodes and edges with full context
         nodes, edges = await meetmap_service.extract_nodes(transcript_chunk)
@@ -432,7 +491,7 @@ async def process_transcript_chunk(chunk: dict):
 
 
 @app.get("/api/graph/path/down/{node_id}")
-async def get_downward_path(node_id: str, user_id: str = Query(..., description="User ID (required)")):
+async def get_downward_path(node_id: str, meeting_id: str = Query(..., description="Meeting ID (required)")):
     """Get all paths from node down to its last children"""
     try:
         if not node_id or not node_id.strip():
@@ -441,7 +500,7 @@ async def get_downward_path(node_id: str, user_id: str = Query(..., description=
                 content={"status": "error", "message": "node_id is required"}
             )
         graph_manager = meetmap_service.graph_manager
-        result = await graph_manager.get_downward_paths(node_id, user_id)
+        result = await graph_manager.get_downward_paths(node_id, meeting_id)
         return {"status": "success", **result}
     except KeyError as e:
         return JSONResponse(
@@ -456,7 +515,7 @@ async def get_downward_path(node_id: str, user_id: str = Query(..., description=
 
 
 @app.get("/api/graph/path/up/{node_id}")
-async def get_upward_path(node_id: str, user_id: str = Query(..., description="User ID (required)")):
+async def get_upward_path(node_id: str, meeting_id: str = Query(..., description="Meeting ID (required)")):
     """Get path from node up to root"""
     try:
         if not node_id or not node_id.strip():
@@ -465,7 +524,7 @@ async def get_upward_path(node_id: str, user_id: str = Query(..., description="U
                 content={"status": "error", "message": "node_id is required"}
             )
         graph_manager = meetmap_service.graph_manager
-        result = await graph_manager.get_path_to_root(node_id, user_id)
+        result = await graph_manager.get_path_to_root(node_id, meeting_id)
         return {"status": "success", **result}
     except KeyError as e:
         return JSONResponse(
@@ -480,7 +539,7 @@ async def get_upward_path(node_id: str, user_id: str = Query(..., description="U
 
 
 @app.get("/api/graph/maturity/{node_id}")
-async def get_maturity(node_id: str, user_id: str = Query(..., description="User ID (required)")):
+async def get_maturity(node_id: str, meeting_id: str = Query(..., description="Meeting ID (required)")):
     """Get maturity score for a node"""
     try:
         if not node_id or not node_id.strip():
@@ -489,7 +548,7 @@ async def get_maturity(node_id: str, user_id: str = Query(..., description="User
                 content={"status": "error", "message": "node_id is required"}
             )
         graph_manager = meetmap_service.graph_manager
-        result = await graph_manager.calculate_maturity(node_id, user_id)
+        result = await graph_manager.calculate_maturity(node_id, meeting_id)
         return {"status": "success", **result}
     except KeyError as e:
         return JSONResponse(
@@ -504,7 +563,7 @@ async def get_maturity(node_id: str, user_id: str = Query(..., description="User
 
 
 @app.get("/api/graph/influence/{node_id}")
-async def get_influence(node_id: str, user_id: str = Query(..., description="User ID (required)")):
+async def get_influence(node_id: str, meeting_id: str = Query(..., description="Meeting ID (required)")):
     """Get influence score for a node"""
     try:
         if not node_id or not node_id.strip():
@@ -513,7 +572,7 @@ async def get_influence(node_id: str, user_id: str = Query(..., description="Use
                 content={"status": "error", "message": "node_id is required"}
             )
         graph_manager = meetmap_service.graph_manager
-        result = await graph_manager.calculate_influence(node_id, user_id)
+        result = await graph_manager.calculate_influence(node_id, meeting_id)
         return {"status": "success", **result}
     except KeyError as e:
         return JSONResponse(
@@ -528,7 +587,7 @@ async def get_influence(node_id: str, user_id: str = Query(..., description="Use
 
 
 @app.get("/api/graph/node/{node_id}/summary")
-async def get_node_summary(node_id: str, user_id: str = Query(..., description="User ID (required)")):
+async def get_node_summary(node_id: str, meeting_id: str = Query(..., description="Meeting ID (required)")):
     """Get conversation summary from root to this node (max 50 words)"""
     try:
         if not node_id or not node_id.strip():
@@ -547,7 +606,7 @@ async def get_node_summary(node_id: str, user_id: str = Query(..., description="
         graph_manager = meetmap_service.graph_manager
         
         # Get path from root to this node
-        path_result = await graph_manager.get_path_to_root(node_id, user_id)
+        path_result = await graph_manager.get_path_to_root(node_id, meeting_id)
         path_node_ids = path_result.get("path", [])
         
         if not path_node_ids:
@@ -559,7 +618,7 @@ async def get_node_summary(node_id: str, user_id: str = Query(..., description="
         # Get all nodes in the path
         path_nodes = []
         for path_node_id in path_node_ids:
-            node = await graph_manager.get_node(path_node_id, user_id)
+            node = await graph_manager.get_node(path_node_id, meeting_id)
             if node:
                 path_nodes.append(node)
         
@@ -592,15 +651,15 @@ async def get_node_summary(node_id: str, user_id: str = Query(..., description="
 
 
 @app.get("/api/graph/state")
-async def get_graph_state(user_id: str = Query(..., description="User ID (required)")):
-    """Get the complete graph state (all nodes and edges) for a user"""
+async def get_graph_state(meeting_id: str = Query(..., description="Meeting ID (required)")):
+    """Get the complete graph state (all nodes and edges) for a meeting"""
     try:
         graph_manager = meetmap_service.graph_manager
         
-        # Get all nodes filtered by user_id
-        all_graph_nodes = await graph_manager.get_all_nodes(user_id=user_id)
+        # Get all nodes filtered by meeting_id
+        all_graph_nodes = await graph_manager.get_all_nodes(meeting_id=meeting_id)
         node_ids = [node.id for node in all_graph_nodes]
-        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] get_graph_state: Found {len(all_graph_nodes)} nodes for user_id={user_id}")
+        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] get_graph_state: Found {len(all_graph_nodes)} nodes for meeting_id={meeting_id}")
         print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] get_graph_state: Node IDs: {node_ids}")
         
         # Convert to frontend format using the service's conversion method
@@ -609,8 +668,8 @@ async def get_graph_state(user_id: str = Query(..., description="User ID (requir
         nodes = []
         edges = []
         
-        # Include root node (user-specific)
-        root = await graph_manager.get_root(user_id=user_id)
+        # Include root node (meeting-specific)
+        root = await graph_manager.get_root(meeting_id=meeting_id)
         if root:
             root_node_data = NodeData(
                 id=root.id,
@@ -627,10 +686,10 @@ async def get_graph_state(user_id: str = Query(..., description="User ID (requir
             nodes.append(root_node_data)
         
         # Convert all other nodes
-        user_root_id = f"root_{user_id}"
+        meeting_root_id = f"root_meeting_{meeting_id}"
         for graph_node in all_graph_nodes:
             # Skip root nodes (already added above)
-            if graph_node.id == user_root_id:
+            if graph_node.id == meeting_root_id:
                 continue
             
             cluster_id = graph_node.metadata.get("cluster_id")
@@ -656,8 +715,8 @@ async def get_graph_state(user_id: str = Query(..., description="User ID (requir
             
             # Create edge from parent to this node
             if graph_node.parent_id:
-                # Determine if parent is a root node (user-specific)
-                is_root_parent = graph_node.parent_id == user_root_id
+                # Determine if parent is a root node (meeting-specific)
+                is_root_parent = graph_node.parent_id == meeting_root_id
                 
                 edge = EdgeData(
                     from_node=graph_node.parent_id,
@@ -675,7 +734,7 @@ async def get_graph_state(user_id: str = Query(..., description="User ID (requir
             "nodes": [node.model_dump() for node in nodes],
             "edges": [edge.model_dump() for edge in edges]
         }
-        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] get_graph_state: Returning {len(result['nodes'])} nodes, {len(result['edges'])} edges for user_id={user_id}")
+        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] get_graph_state: Returning {len(result['nodes'])} nodes, {len(result['edges'])} edges for meeting_id={meeting_id}")
         return result
         
     except Exception as e:
@@ -693,7 +752,7 @@ async def get_graph_state(user_id: str = Query(..., description="User ID (requir
 class ChatRequest(BaseModel):
     """Request model for chat endpoint"""
     question: str
-    user_id: str
+    meeting_id: str  # Meeting ID (required)
     image: Optional[str] = None  # Base64-encoded image (optional)
 
 
@@ -713,17 +772,25 @@ async def ask_meeting_assistant(request: ChatRequest):
                 content={"status": "error", "message": "question is required and cannot be empty"}
             )
         
-        if not request.user_id or not request.user_id.strip():
+        if not request.meeting_id or not request.meeting_id.strip():
             return JSONResponse(
                 status_code=400,
-                content={"status": "error", "message": "user_id is required"}
+                content={"status": "error", "message": "meeting_id is required"}
             )
         
         question = request.question.strip()
-        user_id = request.user_id.strip()
+        meeting_id = request.meeting_id.strip()
         
-        # Get all nodes for the user (optional - meeting context)
-        all_nodes = await db.get_all_nodes(user_id)
+        # Verify meeting exists
+        meeting = await db.get_meeting(meeting_id)
+        if not meeting:
+            return JSONResponse(
+                status_code=404,
+                content={"status": "error", "message": f"Meeting {meeting_id} not found"}
+            )
+        
+        # Get all nodes for the meeting (optional - meeting context)
+        all_nodes = await db.get_all_nodes(meeting_id)
         
         # Extract summaries (descriptions) from nodes, skip root nodes
         node_descriptions = []

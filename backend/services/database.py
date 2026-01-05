@@ -1,6 +1,7 @@
 """
 Database service for PostgreSQL connection and operations
 Uses asyncpg for async database operations
+VERSION 2: Changed from user_id to meeting_id based architecture
 """
 
 import os
@@ -22,10 +23,8 @@ class Database:
     
     async def connect(self):
         """Create database connection pool"""
-        # Get DATABASE_URL from environment (Railway provides this)
         self.database_url = os.getenv("DATABASE_URL")
         
-        # Strip whitespace if present
         if self.database_url:
             self.database_url = self.database_url.strip()
         
@@ -41,14 +40,7 @@ class Database:
             print(f"[ERROR] {error_msg}")
             raise ValueError(error_msg)
         
-        # Parse DATABASE_URL and create connection pool
-        # Railway DATABASE_URL format: postgresql://user:password@host:port/dbname
-        # asyncpg needs: postgresql://user:password@host:port/dbname
-        
         try:
-            # Create connection pool
-            # min_size: minimum connections in pool
-            # max_size: maximum connections in pool
             self.pool = await asyncpg.create_pool(
                 self.database_url,
                 min_size=2,
@@ -67,10 +59,7 @@ class Database:
             print("[SUCCESS] Database connection pool closed")
     
     async def execute(self, query: str, *args) -> str:
-        """
-        Execute a query (INSERT, UPDATE, DELETE)
-        Returns: status message
-        """
+        """Execute a query (INSERT, UPDATE, DELETE)"""
         if not self.pool:
             raise RuntimeError("Database pool not initialized. Call connect() first.")
         
@@ -79,10 +68,7 @@ class Database:
             return result
     
     async def fetch(self, query: str, *args) -> List[asyncpg.Record]:
-        """
-        Fetch multiple rows
-        Returns: List of records
-        """
+        """Fetch multiple rows"""
         if not self.pool:
             raise RuntimeError("Database pool not initialized. Call connect() first.")
         
@@ -91,10 +77,7 @@ class Database:
             return rows
     
     async def fetchrow(self, query: str, *args) -> Optional[asyncpg.Record]:
-        """
-        Fetch a single row
-        Returns: Single record or None
-        """
+        """Fetch a single row"""
         if not self.pool:
             raise RuntimeError("Database pool not initialized. Call connect() first.")
         
@@ -103,10 +86,7 @@ class Database:
             return row
     
     async def fetchval(self, query: str, *args) -> Any:
-        """
-        Fetch a single value
-        Returns: Single value or None
-        """
+        """Fetch a single value"""
         if not self.pool:
             raise RuntimeError("Database pool not initialized. Call connect() first.")
         
@@ -115,18 +95,13 @@ class Database:
             return val
     
     async def health_check(self) -> Dict[str, Any]:
-        """
-        Check database connection health
-        Returns: Health status dictionary
-        """
+        """Check database connection health"""
         try:
             if not self.pool:
                 return {"status": "disconnected", "error": "Pool not initialized"}
             
-            # Try a simple query
             result = await self.fetchval("SELECT 1")
             if result == 1:
-                # Get database info
                 db_name = await self.fetchval("SELECT current_database()")
                 db_version = await self.fetchval("SELECT version()")
                 
@@ -141,97 +116,86 @@ class Database:
             return {"status": "error", "error": str(e)}
     
     # ============================================
-    # Graph Node Methods (with user_id filtering)
+    # Meeting Methods
     # ============================================
     
-    async def get_node(self, node_id: str, user_id: str) -> Optional[asyncpg.Record]:
-        """
-        Get a single node by ID, filtered by user_id for isolation
-        
-        Args:
-            node_id: Node ID
-            user_id: User ID (required for isolation)
-        
-        Returns:
-            Node record or None if not found
-        """
+    async def create_meeting(
+        self,
+        meeting_id: str,
+        user_id: str,
+        title: str = "Untitled Meeting",
+        description: Optional[str] = None
+    ) -> str:
+        """Create a new meeting"""
+        await self.execute(
+            """
+            INSERT INTO meetings (id, user_id, title, description)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (id) DO UPDATE SET
+                title = EXCLUDED.title,
+                description = EXCLUDED.description
+            """,
+            meeting_id, user_id, title, description or ""
+        )
+        return "Meeting created"
+    
+    async def get_meeting(self, meeting_id: str) -> Optional[asyncpg.Record]:
+        """Get a meeting by ID"""
         return await self.fetchrow(
-            "SELECT * FROM graph_nodes WHERE id = $1 AND user_id = $2",
-            node_id, user_id
+            "SELECT * FROM meetings WHERE id = $1",
+            meeting_id
         )
     
-    async def get_all_nodes(self, user_id: str) -> List[asyncpg.Record]:
-        """
-        Get all nodes for a user (user isolation enforced)
-        
-        Args:
-            user_id: User ID (required)
-        
-        Returns:
-            List of node records
-        """
+    async def get_meetings_by_user(self, user_id: str) -> List[asyncpg.Record]:
+        """Get all meetings for a user"""
         return await self.fetch(
-            "SELECT * FROM graph_nodes WHERE user_id = $1 ORDER BY last_updated",
+            "SELECT * FROM meetings WHERE user_id = $1 ORDER BY created_at DESC",
             user_id
         )
     
-    async def get_root_node(self, user_id: str) -> Optional[asyncpg.Record]:
-        """
-        Get root node for a user
-        
-        Args:
-            user_id: User ID
-        
-        Returns:
-            Root node record or None
-        """
-        root_id = f"root_{user_id}"
-        return await self.get_node(root_id, user_id)
+    # ============================================
+    # Graph Node Methods (with meeting_id filtering)
+    # ============================================
     
-    async def get_children(self, parent_id: str, user_id: str) -> List[asyncpg.Record]:
-        """
-        Get all children of a node, filtered by user_id
-        
-        Args:
-            parent_id: Parent node ID
-            user_id: User ID (required for isolation)
-        
-        Returns:
-            List of child node records
-        """
+    async def get_node(self, node_id: str, meeting_id: str) -> Optional[asyncpg.Record]:
+        """Get a single node by ID, filtered by meeting_id"""
+        return await self.fetchrow(
+            "SELECT * FROM graph_nodes WHERE id = $1 AND meeting_id = $2",
+            node_id, meeting_id
+        )
+    
+    async def get_all_nodes(self, meeting_id: str) -> List[asyncpg.Record]:
+        """Get all nodes for a meeting"""
         return await self.fetch(
-            "SELECT * FROM graph_nodes WHERE parent_id = $1 AND user_id = $2",
-            parent_id, user_id
+            "SELECT * FROM graph_nodes WHERE meeting_id = $1 ORDER BY last_updated",
+            meeting_id
+        )
+    
+    async def get_root_node(self, meeting_id: str) -> Optional[asyncpg.Record]:
+        """Get root node for a meeting"""
+        root_id = f"root_meeting_{meeting_id}"
+        return await self.get_node(root_id, meeting_id)
+    
+    async def get_children(self, parent_id: str, meeting_id: str) -> List[asyncpg.Record]:
+        """Get all children of a node, filtered by meeting_id"""
+        return await self.fetch(
+            "SELECT * FROM graph_nodes WHERE parent_id = $1 AND meeting_id = $2",
+            parent_id, meeting_id
         )
     
     async def save_node(
         self,
         node_id: str,
-        user_id: str,
+        meeting_id: str,
         embedding: List[float],
         summary: str,
         parent_id: Optional[str],
         depth: int,
         metadata: Dict[str, Any]
     ) -> str:
-        """
-        Save a node to database (user_id required)
-        
-        Args:
-            node_id: Node ID
-            user_id: User ID (required)
-            embedding: Embedding vector
-            summary: Node summary text
-            parent_id: Parent node ID (optional)
-            depth: Node depth
-            metadata: Additional metadata (will be stored as JSONB)
-        
-        Returns:
-            Status message
-        """
+        """Save a node to database (meeting_id required)"""
         import json
         
-        # Convert embedding and metadata to JSON
         embedding_json = json.dumps(embedding)
         metadata_json = json.dumps(metadata)
         
@@ -239,7 +203,7 @@ class Database:
         try:
             await self.execute(
                 """
-                INSERT INTO graph_nodes (id, user_id, embedding, summary, parent_id, depth, metadata)
+                INSERT INTO graph_nodes (id, meeting_id, embedding, summary, parent_id, depth, metadata)
                 VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7::jsonb)
                 ON CONFLICT (id) DO UPDATE SET
                     embedding = EXCLUDED.embedding,
@@ -249,200 +213,124 @@ class Database:
                     metadata = EXCLUDED.metadata,
                     last_updated = NOW()
                 """,
-                node_id, user_id, embedding_json, summary, parent_id, depth, metadata_json
+                node_id, meeting_id, embedding_json, summary, parent_id, depth, metadata_json
             )
-            print(f"[{time.strftime('%H:%M:%S')}] [DB] Saved node: {node_id} for user_id={user_id}")
+            print(f"[{time.strftime('%H:%M:%S')}] [DB] Saved node: {node_id} for meeting_id={meeting_id}")
             return "Node saved"
         except Exception as e:
-            print(f"[{time.strftime('%H:%M:%S')}] [DB ERROR] Failed to save node {node_id} for user_id={user_id}: {e}")
+            print(f"[{time.strftime('%H:%M:%S')}] [DB ERROR] Failed to save node {node_id} for meeting_id={meeting_id}: {e}")
             import traceback
             traceback.print_exc()
             raise
     
     # ============================================
-    # Edge Methods (with user_id filtering)
+    # Edge Methods (with meeting_id filtering)
     # ============================================
     
-    async def get_edges(self, user_id: str) -> List[asyncpg.Record]:
-        """
-        Get all edges for a user (user isolation enforced)
-        
-        Args:
-            user_id: User ID (required)
-        
-        Returns:
-            List of edge records
-        """
+    async def get_edges(self, meeting_id: str) -> List[asyncpg.Record]:
+        """Get all edges for a meeting"""
         return await self.fetch(
-            "SELECT * FROM graph_edges WHERE user_id = $1",
-            user_id
+            "SELECT * FROM graph_edges WHERE meeting_id = $1",
+            meeting_id
         )
     
     async def save_edge(
         self,
         from_node: str,
         to_node: str,
-        user_id: str,
+        meeting_id: str,
         edge_type: str = "extends",
         strength: float = 1.0,
         metadata: Optional[Dict[str, Any]] = None
     ) -> str:
-        """
-        Save an edge to database (user_id required)
-        
-        Args:
-            from_node: Source node ID
-            to_node: Destination node ID
-            user_id: User ID (required)
-            edge_type: Type of edge
-            strength: Edge strength
-            metadata: Additional metadata
-        
-        Returns:
-            Status message
-        """
+        """Save an edge to database (meeting_id required)"""
         import json
         
         metadata_json = json.dumps(metadata or {})
         
         await self.execute(
             """
-            INSERT INTO graph_edges (from_node, to_node, user_id, edge_type, strength, metadata)
+            INSERT INTO graph_edges (from_node, to_node, meeting_id, edge_type, strength, metadata)
             VALUES ($1, $2, $3, $4, $5, $6::jsonb)
             ON CONFLICT (from_node, to_node) DO UPDATE SET
                 edge_type = EXCLUDED.edge_type,
                 strength = EXCLUDED.strength,
                 metadata = EXCLUDED.metadata
             """,
-            from_node, to_node, user_id, edge_type, strength, metadata_json
+            from_node, to_node, meeting_id, edge_type, strength, metadata_json
         )
         
         return "Edge saved"
     
     # ============================================
-    # Cluster Methods (with user_id filtering)
+    # Cluster Methods (with meeting_id filtering)
     # ============================================
     
-    async def get_clusters(self, user_id: str) -> List[asyncpg.Record]:
-        """
-        Get all clusters for a user
-        
-        Args:
-            user_id: User ID (required)
-        
-        Returns:
-            List of cluster records
-        """
+    async def get_clusters(self, meeting_id: str) -> List[asyncpg.Record]:
+        """Get all clusters for a meeting"""
         return await self.fetch(
-            "SELECT * FROM clusters WHERE user_id = $1 ORDER BY cluster_id",
-            user_id
+            "SELECT * FROM clusters WHERE meeting_id = $1 ORDER BY cluster_id",
+            meeting_id
         )
     
-    async def get_cluster(self, cluster_id: int, user_id: str) -> Optional[asyncpg.Record]:
-        """
-        Get a single cluster by ID, filtered by user_id
-        
-        Args:
-            cluster_id: Cluster ID
-            user_id: User ID (required)
-        
-        Returns:
-            Cluster record or None
-        """
+    async def get_cluster(self, cluster_id: int, meeting_id: str) -> Optional[asyncpg.Record]:
+        """Get a single cluster by ID, filtered by meeting_id"""
         return await self.fetchrow(
-            "SELECT * FROM clusters WHERE cluster_id = $1 AND user_id = $2",
-            cluster_id, user_id
+            "SELECT * FROM clusters WHERE cluster_id = $1 AND meeting_id = $2",
+            cluster_id, meeting_id
         )
     
     async def save_cluster(
         self,
         cluster_id: int,
-        user_id: str,
+        meeting_id: str,
         centroid: List[float],
         color: str
     ) -> str:
-        """
-        Save or update a cluster
-        
-        Args:
-            cluster_id: Cluster ID
-            user_id: User ID (required)
-            centroid: Centroid embedding vector
-            color: Hex color code
-        
-        Returns:
-            Status message
-        """
+        """Save or update a cluster"""
         import json
         
         centroid_json = json.dumps(centroid)
         
         await self.execute(
             """
-            INSERT INTO clusters (cluster_id, user_id, centroid, color, updated_at)
+            INSERT INTO clusters (cluster_id, meeting_id, centroid, color, updated_at)
             VALUES ($1, $2, $3::jsonb, $4, NOW())
-            ON CONFLICT (cluster_id, user_id) DO UPDATE SET
+            ON CONFLICT (cluster_id, meeting_id) DO UPDATE SET
                 centroid = EXCLUDED.centroid,
                 color = EXCLUDED.color,
                 updated_at = NOW()
             """,
-            cluster_id, user_id, centroid_json, color
+            cluster_id, meeting_id, centroid_json, color
         )
         
         return "Cluster saved"
     
-    async def get_cluster_members(self, cluster_id: int, user_id: str) -> List[asyncpg.Record]:
-        """
-        Get all nodes in a cluster
-        
-        Args:
-            cluster_id: Cluster ID
-            user_id: User ID (required)
-        
-        Returns:
-            List of cluster member records
-        """
+    async def get_cluster_members(self, cluster_id: int, meeting_id: str) -> List[asyncpg.Record]:
+        """Get all nodes in a cluster"""
         return await self.fetch(
-            "SELECT * FROM cluster_members WHERE cluster_id = $1 AND user_id = $2",
-            cluster_id, user_id
+            "SELECT * FROM cluster_members WHERE cluster_id = $1 AND meeting_id = $2",
+            cluster_id, meeting_id
         )
     
-    async def add_cluster_member(self, cluster_id: int, node_id: str, user_id: str) -> str:
-        """
-        Add a node to a cluster
-        
-        Args:
-            cluster_id: Cluster ID
-            node_id: Node ID
-            user_id: User ID (required)
-        
-        Returns:
-            Status message
-        """
+    async def add_cluster_member(self, cluster_id: int, node_id: str, meeting_id: str) -> str:
+        """Add a node to a cluster"""
         await self.execute(
             """
-            INSERT INTO cluster_members (cluster_id, node_id, user_id)
+            INSERT INTO cluster_members (cluster_id, node_id, meeting_id)
             VALUES ($1, $2, $3)
             ON CONFLICT (cluster_id, node_id) DO NOTHING
             """,
-            cluster_id, node_id, user_id
+            cluster_id, node_id, meeting_id
         )
         
         return "Cluster member added"
     
-    async def get_next_cluster_id(self, user_id: str) -> int:
-        """
-        Get the next available cluster ID for a user
-        
-        Args:
-            user_id: User ID
-        
-        Returns:
-            Next cluster ID
-        """
+    async def get_next_cluster_id(self, meeting_id: str) -> int:
+        """Get the next available cluster ID for a meeting"""
         result = await self.fetchval(
-            "SELECT COALESCE(MAX(cluster_id), -1) + 1 FROM clusters WHERE user_id = $1",
-            user_id
+            "SELECT COALESCE(MAX(cluster_id), -1) + 1 FROM clusters WHERE meeting_id = $1",
+            meeting_id
         )
         return result if result is not None else 0
 

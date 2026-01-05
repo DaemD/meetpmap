@@ -94,15 +94,17 @@ class MeetMapService:
             embed_elapsed = time.time() - embed_start
             print(f"[{time.strftime('%H:%M:%S')}]     Embedding generated in {embed_elapsed:.2f}s (embedding dim: {len(embedding)})")
             
-            # Global search for similar nodes (filtered by user_id if provided)
+            # Global search for similar nodes (filtered by meeting_id)
             search_start = time.time()
             print(f"[{time.strftime('%H:%M:%S')}]     Searching for similar nodes in graph...")
-            user_id_for_search = chunk.user_id if chunk.user_id else "system"
+            meeting_id_for_search = chunk.meeting_id if chunk.meeting_id else None
+            if not meeting_id_for_search:
+                raise ValueError("meeting_id is required for similarity search")
             similar_nodes = await self.graph_manager.find_globally_similar_nodes(
                 candidate_embedding=embedding,
                 exclude_node_id=None,
                 filter_by_threshold=False,  # Get top-K regardless of threshold
-                user_id=user_id_for_search  # Filter by user_id
+                meeting_id=meeting_id_for_search  # Filter by meeting_id
             )
             search_elapsed = time.time() - search_start
             print(f"[{time.strftime('%H:%M:%S')}]     Global search completed in {search_elapsed:.3f}s - found {len(similar_nodes)} similar node(s)")
@@ -120,21 +122,20 @@ class MeetMapService:
                     candidate_summary=idea_text,
                     candidate_embedding=embedding,
                     similar_nodes=similar_nodes,
-                    user_id=chunk.user_id
+                    meeting_id=chunk.meeting_id
                 )
             else:
-                # No nodes in graph - place under user-specific root
-                if chunk.user_id:
-                    # Get or create user-specific root
-                    user_root = await self.graph_manager.get_root(user_id=chunk.user_id)
-                    if not user_root:
-                        # Create user-specific root
-                        await self.graph_manager._initialize_root(user_id=chunk.user_id)
-                        user_root = await self.graph_manager.get_root(user_id=chunk.user_id)
-                    parent_id = user_root.id if user_root else f"root_{chunk.user_id}"
+                # No nodes in graph - place under meeting-specific root
+                if chunk.meeting_id:
+                    # Get or create meeting-specific root
+                    meeting_root = await self.graph_manager.get_root(meeting_id=chunk.meeting_id)
+                    if not meeting_root:
+                        # Create meeting-specific root
+                        await self.graph_manager._initialize_root(meeting_id=chunk.meeting_id)
+                        meeting_root = await self.graph_manager.get_root(meeting_id=chunk.meeting_id)
+                    parent_id = meeting_root.id if meeting_root else f"root_meeting_{chunk.meeting_id}"
                 else:
-                    root = await self.graph_manager.get_root(user_id="system")
-                    parent_id = root.id if root else "root"
+                    raise ValueError("meeting_id is required for node placement")
                 print(f"[{time.strftime('%H:%M:%S')}]     No existing nodes found, placing under root: {parent_id}")
             llm_elapsed = time.time() - llm_start
             print(f"[{time.strftime('%H:%M:%S')}]     Placement decision completed in {llm_elapsed:.2f}s - placing under {parent_id}")
@@ -142,29 +143,27 @@ class MeetMapService:
             # Place node in graph
             place_start = time.time()
             self.node_counter += 1
-            # Make node IDs unique per user to avoid conflicts
-            user_id_for_node = chunk.user_id if chunk.user_id else "system"
-            node_id = f"node_{user_id_for_node}_{self.node_counter}"
+            # Make node IDs unique per meeting to avoid conflicts
+            meeting_id_for_node = chunk.meeting_id if chunk.meeting_id else None
+            if not meeting_id_for_node:
+                raise ValueError("meeting_id is required for node creation")
+            node_id = f"node_{meeting_id_for_node}_{self.node_counter}"
             
-            # Include user_id in metadata if provided
+            # Include meeting_id in metadata
             node_metadata = {
                 "chunk_id": chunk.chunk_id,
                 "timestamp": chunk.start,
                 "end_time": chunk.end,
-                "speaker": chunk.speaker
+                "speaker": chunk.speaker,
+                "meeting_id": chunk.meeting_id
             }
-            if chunk.user_id:
-                node_metadata["user_id"] = chunk.user_id
-            
-            # user_id is required for database operations
-            user_id_for_node = chunk.user_id if chunk.user_id else "system"
             
             graph_node = await self.graph_manager.add_node(
                 node_id=node_id,
                 embedding=embedding,
                 summary=idea_text,
                 parent_id=parent_id,
-                user_id=user_id_for_node,
+                meeting_id=meeting_id_for_node,
                 metadata=node_metadata
             )
             place_elapsed = time.time() - place_start
@@ -180,7 +179,7 @@ class MeetMapService:
         # Step 5: Convert graph structure to frontend format
         step5_start = time.time()
         print(f"[{time.strftime('%H:%M:%S')}] STEP 5: Converting to frontend format...")
-        nodes, edges = await self._graph_to_frontend_format(new_graph_nodes, user_id=chunk.user_id)
+        nodes, edges = await self._graph_to_frontend_format(new_graph_nodes, meeting_id=chunk.meeting_id)
         step5_elapsed = time.time() - step5_start
         print(f"[{time.strftime('%H:%M:%S')}] STEP 5: Completed in {step5_elapsed:.3f}s")
         
@@ -199,8 +198,10 @@ class MeetMapService:
         print(f"[{time.strftime('%H:%M:%S')}]     Preparing GPT prompt (chunk length: {len(chunk.text)} chars)...")
         
         # Get recent chunk nodes for context (most recent 3-5 chunks)
-        user_id_for_context = chunk.user_id if chunk.user_id else "system"
-        recent_chunks = await self.graph_manager.get_recent_chunk_nodes(num_chunks=5, user_id=user_id_for_context)
+        meeting_id_for_context = chunk.meeting_id if chunk.meeting_id else None
+        if not meeting_id_for_context:
+            raise ValueError("meeting_id is required for context retrieval")
+        recent_chunks = await self.graph_manager.get_recent_chunk_nodes(num_chunks=5, meeting_id=meeting_id_for_context)
         
         # Build context string from recent nodes
         context_parts = []
@@ -307,7 +308,7 @@ Return ONLY the JSON object, no other text."""
     async def _graph_to_frontend_format(
         self,
         new_graph_nodes: List,
-        user_id: Optional[str] = None
+        meeting_id: Optional[str] = None
     ) -> Tuple[List[NodeData], List[EdgeData]]:
         """
         Convert graph nodes to frontend-compatible format
@@ -316,22 +317,21 @@ Return ONLY the JSON object, no other text."""
         
         Args:
             new_graph_nodes: List of newly created GraphNode objects
-            user_id: Optional user ID to get user-specific root
+            meeting_id: Meeting ID to get meeting-specific root
         """
         nodes = []
         edges = []
         
-        # Determine root ID (user-specific or global)
-        if user_id:
-            root_id = f"root_{user_id}"
-        else:
-            root_id = self.graph_manager.root_id
+        if not meeting_id:
+            raise ValueError("meeting_id is required")
+        
+        # Determine root ID (meeting-specific)
+        root_id = f"root_meeting_{meeting_id}"
         
         # Include root node if it exists and we have new nodes
         # Check if any new node has this root as parent (indicates root was just created or is needed)
         if len(new_graph_nodes) > 0:
-            user_id_for_root = user_id if user_id else "system"
-            root = await self.graph_manager.get_root(user_id=user_id_for_root)
+            root = await self.graph_manager.get_root(meeting_id=meeting_id)
             if root:
                 # Check if any new node connects to this root
                 has_root_connection = any(
@@ -378,9 +378,8 @@ Return ONLY the JSON object, no other text."""
             
             # Create edge from parent to this node
             if graph_node.parent_id:
-                # Determine if parent is a root node (global or user-specific)
-                is_root_parent = (graph_node.parent_id == self.graph_manager.root_id) or \
-                                (user_id and graph_node.parent_id == f"root_{user_id}")
+                # Determine if parent is a root node (meeting-specific)
+                is_root_parent = graph_node.parent_id == root_id
                 
                 edge = EdgeData(
                     from_node=graph_node.parent_id,
@@ -400,7 +399,7 @@ Return ONLY the JSON object, no other text."""
         candidate_summary: str,
         candidate_embedding: List[float],
         similar_nodes: List[tuple[str, float, Any]],  # (node_id, similarity, GraphNode)
-        user_id: Optional[str] = None
+        meeting_id: Optional[str] = None
     ) -> str:
         """
         Use LLM to decide node placement based on global similarity search
@@ -415,9 +414,11 @@ Return ONLY the JSON object, no other text."""
         """
         # Format similar nodes for prompt
         similar_nodes_text = ""
-        user_id_for_path = user_id if user_id else "system"
+        meeting_id_for_path = meeting_id if meeting_id else None
+        if not meeting_id_for_path:
+            raise ValueError("meeting_id is required for path retrieval")
         for idx, (node_id, similarity, node) in enumerate(similar_nodes, 1):
-            path = await self.graph_manager.get_node_path(node_id, user_id_for_path)
+            path = await self.graph_manager.get_node_path(node_id, meeting_id_for_path)
             path_str = " → ".join(path) if path else "root"
             similar_nodes_text += f"{idx}. Node ID: {node_id}\n"
             similar_nodes_text += f"   Text: \"{node.summary}\"\n"
@@ -506,18 +507,16 @@ Return ONLY the JSON object, no other text."""
                 print(f"      ⚠️ LLM returned invalid target_node_id: {target_node_id}, using fallback")
                 target_node_id = similar_nodes[0][0]  # Use first similar node
             
-            # Get appropriate root ID (user-specific or global)
-            user_id_for_placement = user_id if user_id else "system"
-            if user_id:
-                user_root = await self.graph_manager.get_root(user_id=user_id)
-                fallback_root_id = user_root.id if user_root else f"root_{user_id}"
-            else:
-                root = await self.graph_manager.get_root(user_id="system")
-                fallback_root_id = root.id if root else "root"
+            # Get appropriate root ID (meeting-specific)
+            meeting_id_for_placement = meeting_id if meeting_id else None
+            if not meeting_id_for_placement:
+                raise ValueError("meeting_id is required for placement")
+            meeting_root = await self.graph_manager.get_root(meeting_id=meeting_id_for_placement)
+            fallback_root_id = meeting_root.id if meeting_root else f"root_meeting_{meeting_id_for_placement}"
             
             # Enforce placement rules based on decision type
             if target_node_id:
-                target_node = await self.graph_manager.get_node(target_node_id, user_id_for_placement)
+                target_node = await self.graph_manager.get_node(target_node_id, meeting_id_for_placement)
                 if target_node:
                     if decision == "continuation" or decision == "resolution":
                         # Place as child of target node
@@ -536,11 +535,11 @@ Return ONLY the JSON object, no other text."""
                 parent_id = fallback_root_id
             
             # Final validation: ensure parent_id exists in graph
-            parent_check = await self.graph_manager.get_node(parent_id, user_id_for_placement)
+            parent_check = await self.graph_manager.get_node(parent_id, meeting_id_for_placement)
             if not parent_check:
                 print(f"      ⚠️ LLM returned invalid parent_id: {parent_id}, using fallback")
                 if target_node_id:
-                    target_node = await self.graph_manager.get_node(target_node_id, user_id_for_placement)
+                    target_node = await self.graph_manager.get_node(target_node_id, meeting_id_for_placement)
                     if target_node:
                         parent_id = target_node.parent_id if target_node.parent_id else fallback_root_id
                     else:
@@ -549,7 +548,7 @@ Return ONLY the JSON object, no other text."""
                     parent_id = fallback_root_id
             
             # Get parent node description for logging
-            parent_node = await self.graph_manager.get_node(parent_id, user_id_for_placement)
+            parent_node = await self.graph_manager.get_node(parent_id, meeting_id_for_placement)
             parent_description = parent_node.summary if parent_node else "N/A"
             
             print(f"      → LLM Decision:")
@@ -563,26 +562,24 @@ Return ONLY the JSON object, no other text."""
             print(f"      ❌ Error in LLM placement decision: {e}")
             import traceback
             traceback.print_exc()
-            # Get appropriate root ID (user-specific or global)
-            user_id_for_fallback = user_id if user_id else "system"
-            if user_id:
-                user_root = await self.graph_manager.get_root(user_id=user_id)
-                fallback_root_id = user_root.id if user_root else f"root_{user_id}"
-            else:
-                root = await self.graph_manager.get_root(user_id="system")
-                fallback_root_id = root.id if root else "root"
+            # Get appropriate root ID (meeting-specific)
+            meeting_id_for_fallback = meeting_id if meeting_id else None
+            if not meeting_id_for_fallback:
+                raise ValueError("meeting_id is required for fallback")
+            meeting_root = await self.graph_manager.get_root(meeting_id=meeting_id_for_fallback)
+            fallback_root_id = meeting_root.id if meeting_root else f"root_meeting_{meeting_id_for_fallback}"
             # Fallback: use most similar node's parent
             if similar_nodes:
                 best_match_id, best_similarity, best_node = similar_nodes[0]
                 return best_node.parent_id if best_node.parent_id else fallback_root_id
             return fallback_root_id
     
-    async def get_graph_summary(self, user_id: str) -> dict:
+    async def get_graph_summary(self, meeting_id: str) -> dict:
         """Get summary of current graph state (for debugging)"""
-        all_nodes = await self.graph_manager.get_all_nodes(user_id=user_id)
+        all_nodes = await self.graph_manager.get_all_nodes(meeting_id=meeting_id)
         return {
             "total_nodes": len(all_nodes),
-            "root_id": f"root_{user_id}",
+            "root_id": f"root_meeting_{meeting_id}",
             "max_depth": max([n.depth for n in all_nodes]) if all_nodes else 0,
             "nodes_by_depth": {
                 depth: len([n for n in all_nodes if n.depth == depth])
