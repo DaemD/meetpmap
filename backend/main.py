@@ -864,6 +864,9 @@ async def get_graph_state(meeting_id: str = Query(..., description="Meeting ID (
             if graph_node.id == meeting_root_id:
                 continue
             
+            # Debug: Log parent_id for each node
+            print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Node {graph_node.id}: parent_id={graph_node.parent_id}, depth={graph_node.depth}")
+            
             cluster_id = graph_node.metadata.get("cluster_id")
             cluster_color = graph_manager.get_cluster_color(cluster_id) if cluster_id is not None else None
             
@@ -900,6 +903,9 @@ async def get_graph_state(meeting_id: str = Query(..., description="Meeting ID (
                     }
                 )
                 edges.append(edge)
+                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Created edge: {graph_node.parent_id} -> {graph_node.id}")
+            else:
+                print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Node {graph_node.id} has no parent_id!")
         
         result = {
             "status": "success",
