@@ -203,7 +203,12 @@ class GraphManager:
         print(f"  [*] Added node: {node_id} (depth={depth}, parent={parent_id})")
         
         # Incrementally assign node to cluster (threshold-based)
-        await self._assign_to_cluster(node_id, embedding, meeting_id)
+        # Don't fail node creation if cluster assignment fails
+        try:
+            await self._assign_to_cluster(node_id, embedding, meeting_id)
+        except Exception as cluster_error:
+            print(f"  [WARNING] Failed to assign node {node_id} to cluster (non-fatal): {cluster_error}")
+            # Continue - node is still created successfully
         
         # Create and return GraphNode object
         node = GraphNode(
