@@ -117,11 +117,7 @@ class MeetMapService:
             # LLM decides placement
             llm_start = time.time()
             
-            if is_first_chunk and idx == 1:
-                # First node always goes under root
-                parent_id = root_id
-                print(f"[{time.strftime('%H:%M:%S')}]     First node in graph, placing under root: {parent_id}")
-            elif similar_nodes:
+            if similar_nodes:
                 print(f"[{time.strftime('%H:%M:%S')}]     Calling LLM for placement decision...")
                 parent_id = await self.decide_placement(
                     candidate_summary=idea_text,
@@ -136,9 +132,18 @@ class MeetMapService:
                     print(f"[{time.strftime('%H:%M:%S')}]     [WARNING] LLM selected invalid parent {parent_id}, falling back to root")
                     parent_id = root_id
             else:
-                # No similar nodes found - place under root
-                parent_id = root_id
-                print(f"[{time.strftime('%H:%M:%S')}]     No similar nodes found, placing under root: {parent_id}")
+                # No nodes in graph - place under meeting-specific root
+                if chunk.meeting_id:
+                    # Get or create meeting-specific root
+                    meeting_root = await self.graph_manager.get_root(meeting_id=chunk.meeting_id)
+                    if not meeting_root:
+                        # Create meeting-specific root
+                        await self.graph_manager._initialize_root(meeting_id=chunk.meeting_id)
+                        meeting_root = await self.graph_manager.get_root(meeting_id=chunk.meeting_id)
+                    parent_id = meeting_root.id if meeting_root else f"root_meeting_{chunk.meeting_id}"
+                else:
+                    raise ValueError("meeting_id is required for node placement")
+                print(f"[{time.strftime('%H:%M:%S')}]     No existing nodes found, placing under root: {parent_id}")
             llm_elapsed = time.time() - llm_start
             print(f"[{time.strftime('%H:%M:%S')}]     Placement decision completed in {llm_elapsed:.2f}s - placing under {parent_id}")
             
