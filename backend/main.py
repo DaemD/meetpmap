@@ -3,7 +3,7 @@ MeetMap Prototype - Main FastAPI Application
 Simple pipeline: Receive chunk → Extract nodes → Return to frontend
 """
 
-from fastapi import FastAPI, Query, Body
+from fastapi import FastAPI, Query, Body, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -253,7 +253,7 @@ class TranscribeRequest(BaseModel):
 
 
 @app.post("/api/transcribe")
-async def transcribe_audio(request: TranscribeRequest):
+async def transcribe_audio(request: TranscribeRequest, background_tasks: BackgroundTasks):
     """
     Transcribe audio using Whisper API and process it to extract nodes.
     Returns only the transcription text (nodes are processed silently).
@@ -326,46 +326,48 @@ async def transcribe_audio(request: TranscribeRequest):
                     content={"status": "error", "message": "Transcription is empty"}
                 )
             
-            # Step 4: Process transcription internally using existing endpoint logic
-            # Create chunk dict matching TranscriptChunk format
-            chunk_dict = {
-                "text": transcription.strip(),
-                "start": start,
-                "end": end,
-                "user_id": user_id,
-                "speaker": None,  # Whisper doesn't do speaker diarization
-                "chunk_id": None
-            }
-            
-            # Call process_transcript_chunk function internally
-            # This will extract nodes and save them to database
-            print(f"[{time.strftime('%H:%M:%S')}] 🔄 Processing transcription to extract nodes...")
-            try:
-                result = await process_transcript_chunk(chunk_dict)
-                # Check if it's a JSONResponse (error) or dict (success)
-                if isinstance(result, JSONResponse):
-                    print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Error processing transcription: {result.body}")
-                else:
-                    nodes_count = len(result.get('nodes', []))
-                    edges_count = len(result.get('edges', []))
-                    print(f"[{time.strftime('%H:%M:%S')}] ✅ Nodes extracted: {nodes_count} nodes, {edges_count} edges")
-                    # Verify nodes were actually saved to database
-                    saved_nodes = await db.get_all_nodes(user_id)
-                    print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Verified: {len(saved_nodes)} nodes in database for user_id={user_id}")
-            except Exception as process_error:
-                # Log error but still return transcription
-                print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Error processing transcription: {process_error}")
-                import traceback
-                traceback.print_exc()
-                # Continue to return transcription even if node extraction failed
-            
-            # Step 5: Return only transcription
-            return {
+            # Step 4: Return transcription IMMEDIATELY (before node extraction)
+            # This allows frontend to display transcription right away
+            transcription_response = {
                 "status": "success",
                 "transcription": transcription.strip(),
                 "start": start,
                 "end": end
             }
+            
+            # Step 5: Process transcription in background (fire-and-forget)
+            # This extracts nodes and saves them to database asynchronously
+            async def process_nodes_background():
+                try:
+                    chunk_dict = {
+                        "text": transcription.strip(),
+                        "start": start,
+                        "end": end,
+                        "user_id": user_id,
+                        "speaker": None,  # Whisper doesn't do speaker diarization
+                        "chunk_id": None
+                    }
+                    print(f"[{time.strftime('%H:%M:%S')}] 🔄 Processing transcription to extract nodes (background)...")
+                    result = await process_transcript_chunk(chunk_dict)
+                    if isinstance(result, JSONResponse):
+                        print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Error processing transcription: {result.body}")
+                    else:
+                        nodes_count = len(result.get('nodes', []))
+                        edges_count = len(result.get('edges', []))
+                        print(f"[{time.strftime('%H:%M:%S')}] ✅ Nodes extracted: {nodes_count} nodes, {edges_count} edges")
+                        # Verify nodes were actually saved to database
+                        saved_nodes = await db.get_all_nodes(user_id)
+                        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Verified: {len(saved_nodes)} nodes in database for user_id={user_id}")
+                except Exception as process_error:
+                    print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Error processing transcription: {process_error}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Add background task (runs after response is sent)
+            background_tasks.add_task(process_nodes_background)
+            
+            # Return transcription immediately
+            return transcription_response
             
         finally:
             # Clean up temporary file
