@@ -15,10 +15,10 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- Meetings table
--- Each meeting belongs to a user and contains its own graph
+-- Each meeting contains its own graph (user_id is optional)
 CREATE TABLE IF NOT EXISTS meetings (
     id VARCHAR(255) PRIMARY KEY,
-    user_id VARCHAR(255) NOT NULL,
+    user_id VARCHAR(255),
     title VARCHAR(255) NOT NULL DEFAULT 'Untitled Meeting',
     description TEXT,
     created_at TIMESTAMP DEFAULT NOW(),

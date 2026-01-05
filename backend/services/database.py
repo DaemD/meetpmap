@@ -122,7 +122,7 @@ class Database:
     async def create_meeting(
         self,
         meeting_id: str,
-        user_id: str,
+        user_id: Optional[str] = None,
         title: str = "Untitled Meeting",
         description: Optional[str] = None
     ) -> str:

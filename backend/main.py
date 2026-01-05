@@ -160,7 +160,7 @@ async def lifespan(app: FastAPI):
                         await db.execute("""
                             CREATE TABLE IF NOT EXISTS meetings (
                                 id VARCHAR(255) PRIMARY KEY,
-                                user_id VARCHAR(255) NOT NULL,
+                                user_id VARCHAR(255),
                                 title VARCHAR(255) NOT NULL DEFAULT 'Untitled Meeting',
                                 description TEXT,
                                 created_at TIMESTAMP DEFAULT NOW(),
@@ -174,6 +174,37 @@ async def lifespan(app: FastAPI):
                     except Exception as manual_create_error:
                         print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to create meetings table manually: {manual_create_error}")
                         raise RuntimeError("meetings table is required but could not be created")
+                
+                # Check if graph_nodes has meeting_id column (migration check)
+                try:
+                    columns = await db.fetch("""
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_schema = 'public' 
+                        AND table_name = 'graph_nodes'
+                        AND column_name = 'meeting_id'
+                    """)
+                    has_meeting_id = len(columns) > 0
+                    
+                    if not has_meeting_id:
+                        print(f"[{time.strftime('%H:%M:%S')}] [WARNING] graph_nodes table missing meeting_id column - running migration...")
+                        # Run migration: add meeting_id columns
+                        await db.execute("ALTER TABLE graph_nodes ADD COLUMN IF NOT EXISTS meeting_id VARCHAR(255)")
+                        await db.execute("ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS meeting_id VARCHAR(255)")
+                        await db.execute("ALTER TABLE clusters ADD COLUMN IF NOT EXISTS meeting_id VARCHAR(255)")
+                        await db.execute("ALTER TABLE cluster_members ADD COLUMN IF NOT EXISTS meeting_id VARCHAR(255)")
+                        
+                        # Create indexes
+                        await db.execute("CREATE INDEX IF NOT EXISTS idx_graph_nodes_meeting_id ON graph_nodes(meeting_id)")
+                        await db.execute("CREATE INDEX IF NOT EXISTS idx_graph_edges_meeting_id ON graph_edges(meeting_id)")
+                        await db.execute("CREATE INDEX IF NOT EXISTS idx_clusters_meeting_id ON clusters(meeting_id)")
+                        await db.execute("CREATE INDEX IF NOT EXISTS idx_cluster_members_meeting_id ON cluster_members(meeting_id)")
+                        
+                        print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Added meeting_id columns to existing tables")
+                    else:
+                        print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Database schema is up to date (meeting_id columns exist)")
+                except Exception as migration_error:
+                    print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Migration check failed (may be expected): {migration_error}")
             else:
                 print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Schema file not found, skipping migration")
         except Exception as migration_error:
@@ -289,7 +320,6 @@ async def test_database():
 
 class MeetingCreateRequest(BaseModel):
     """Request model for creating a meeting"""
-    user_id: str  # User who owns the meeting
     title: str = "Untitled Meeting"
     description: Optional[str] = None
 
@@ -306,20 +336,14 @@ class TranscribeRequest(BaseModel):
 async def create_meeting(request: MeetingCreateRequest):
     """Create a new meeting"""
     try:
-        if not request.user_id or not request.user_id.strip():
-            return JSONResponse(
-                status_code=400,
-                content={"status": "error", "message": "user_id is required"}
-            )
-        
         # Generate meeting ID
         import uuid
         meeting_id = f"meeting_{uuid.uuid4().hex[:12]}"
         
-        # Create meeting in database
+        # Create meeting in database (user_id is optional/nullable)
         await db.create_meeting(
             meeting_id=meeting_id,
-            user_id=request.user_id.strip(),
+            user_id=None,  # No user_id needed
             title=request.title.strip() if request.title else "Untitled Meeting",
             description=request.description.strip() if request.description else None
         )
@@ -331,7 +355,6 @@ async def create_meeting(request: MeetingCreateRequest):
             "status": "success",
             "meeting": {
                 "id": meeting['id'],
-                "user_id": meeting['user_id'],
                 "title": meeting['title'],
                 "description": meeting.get('description'),
                 "created_at": meeting['created_at'].isoformat() if hasattr(meeting['created_at'], 'isoformat') else str(meeting['created_at'])
