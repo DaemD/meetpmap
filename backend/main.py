@@ -228,6 +228,38 @@ async def lifespan(app: FastAPI):
                             except Exception as e:
                                 print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Could not make cluster_members.user_id nullable: {e}")
                         
+                        # Fix clusters table primary key if it includes user_id
+                        try:
+                            pk_constraint = await db.fetch("""
+                                SELECT constraint_name, constraint_type
+                                FROM information_schema.table_constraints
+                                WHERE table_schema = 'public'
+                                AND table_name = 'clusters'
+                                AND constraint_type = 'PRIMARY KEY'
+                            """)
+                            
+                            if pk_constraint:
+                                # Check if the primary key includes user_id
+                                pk_columns = await db.fetch("""
+                                    SELECT column_name
+                                    FROM information_schema.key_column_usage
+                                    WHERE table_schema = 'public'
+                                    AND table_name = 'clusters'
+                                    AND constraint_name = $1
+                                    ORDER BY ordinal_position
+                                """, pk_constraint[0]['constraint_name'])
+                                
+                                pk_cols = [col['column_name'] for col in pk_columns]
+                                if 'user_id' in pk_cols or ('cluster_id' in pk_cols and 'meeting_id' not in pk_cols):
+                                    print(f"[{time.strftime('%H:%M:%S')}] [*] Fixing clusters table primary key...")
+                                    # Drop old primary key
+                                    await db.execute(f"ALTER TABLE clusters DROP CONSTRAINT IF EXISTS {pk_constraint[0]['constraint_name']}")
+                                    # Create new primary key with (cluster_id, meeting_id)
+                                    await db.execute("ALTER TABLE clusters ADD PRIMARY KEY (cluster_id, meeting_id)")
+                                    print(f"[{time.strftime('%H:%M:%S')}] [SUCCESS] Fixed clusters table primary key to (cluster_id, meeting_id)")
+                        except Exception as e:
+                            print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Could not fix clusters primary key: {e}")
+                        
                         # Create indexes for meeting_id if meeting_id was just added
                         if not has_meeting_id:
                             await db.execute("CREATE INDEX IF NOT EXISTS idx_graph_nodes_meeting_id ON graph_nodes(meeting_id)")
