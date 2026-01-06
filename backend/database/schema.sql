@@ -26,6 +26,23 @@ CREATE TABLE IF NOT EXISTS meetings (
 );
 CREATE INDEX IF NOT EXISTS idx_meetings_created_at ON meetings(created_at);
 
+-- User-Meetings junction table
+-- Links users to their meetings (many-to-many relationship)
+CREATE TABLE IF NOT EXISTS user_meetings (
+    user_id VARCHAR(255) NOT NULL,
+    meeting_id VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (user_id, meeting_id),
+    CONSTRAINT fk_user_meeting_user FOREIGN KEY (user_id) 
+        REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_user_meeting_meeting FOREIGN KEY (meeting_id) 
+        REFERENCES meetings(id) ON DELETE CASCADE
+);
+
+-- Indexes for user_meetings
+CREATE INDEX IF NOT EXISTS idx_user_meetings_user_id ON user_meetings(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_meetings_meeting_id ON user_meetings(meeting_id);
+
 -- Graph nodes table
 -- Now uses meeting_id instead of user_id
 CREATE TABLE IF NOT EXISTS graph_nodes (
@@ -123,6 +140,21 @@ CREATE TABLE IF NOT EXISTS graphs (
     updated_at TIMESTAMP DEFAULT NOW(),
     metadata JSONB DEFAULT '{}'::jsonb
 );
+
+-- Transcriptions table
+-- Stores full transcription text for each meeting
+CREATE TABLE IF NOT EXISTS transcriptions (
+    meeting_id VARCHAR(255) PRIMARY KEY,
+    transcription TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT fk_transcription_meeting FOREIGN KEY (meeting_id) 
+        REFERENCES meetings(id) ON DELETE CASCADE
+);
+
+-- Index for transcriptions
+CREATE INDEX IF NOT EXISTS idx_transcriptions_meeting_id ON transcriptions(meeting_id);
+CREATE INDEX IF NOT EXISTS idx_transcriptions_updated_at ON transcriptions(updated_at);
 
 -- Comments for documentation
 COMMENT ON TABLE meetings IS 'Stores meeting metadata - each meeting belongs to a user and contains its own graph';

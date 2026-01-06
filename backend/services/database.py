@@ -119,6 +119,31 @@ class Database:
     # Meeting Methods
     # ============================================
     
+    async def create_or_get_user(self, user_id: str) -> str:
+        """Create user if doesn't exist, or get existing user"""
+        await self.execute(
+            """
+            INSERT INTO users (id, last_active)
+            VALUES ($1, NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                last_active = NOW()
+            """,
+            user_id
+        )
+        return "User created or updated"
+    
+    async def link_user_to_meeting(self, user_id: str, meeting_id: str) -> str:
+        """Link a user to a meeting in user_meetings table"""
+        await self.execute(
+            """
+            INSERT INTO user_meetings (user_id, meeting_id)
+            VALUES ($1, $2)
+            ON CONFLICT (user_id, meeting_id) DO NOTHING
+            """,
+            user_id, meeting_id
+        )
+        return "User linked to meeting"
+    
     async def create_meeting(
         self,
         meeting_id: str,
@@ -146,10 +171,45 @@ class Database:
         )
     
     async def get_meetings_by_user(self, user_id: str) -> List[asyncpg.Record]:
-        """Get all meetings for a user"""
+        """Get all meetings for a user via user_meetings junction table"""
         return await self.fetch(
-            "SELECT * FROM meetings WHERE user_id = $1 ORDER BY created_at DESC",
+            """
+            SELECT m.* 
+            FROM meetings m
+            INNER JOIN user_meetings um ON m.id = um.meeting_id
+            WHERE um.user_id = $1
+            ORDER BY m.created_at DESC
+            """,
             user_id
+        )
+    
+    # ============================================
+    # Transcription Methods
+    # ============================================
+    
+    async def save_transcription(self, meeting_id: str, transcription_text: str) -> str:
+        """
+        Save or append transcription for a meeting.
+        If meeting_id doesn't exist, creates new row.
+        If meeting_id exists, concatenates new transcription to existing one.
+        """
+        await self.execute(
+            """
+            INSERT INTO transcriptions (meeting_id, transcription, updated_at)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (meeting_id) DO UPDATE SET
+                transcription = transcriptions.transcription || ' ' || EXCLUDED.transcription,
+                updated_at = NOW()
+            """,
+            meeting_id, transcription_text.strip()
+        )
+        return "Transcription saved"
+    
+    async def get_transcription(self, meeting_id: str) -> Optional[asyncpg.Record]:
+        """Get transcription for a meeting"""
+        return await self.fetchrow(
+            "SELECT * FROM transcriptions WHERE meeting_id = $1",
+            meeting_id
         )
     
     # ============================================

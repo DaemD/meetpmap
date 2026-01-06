@@ -3,7 +3,7 @@ MeetMap Prototype - Main FastAPI Application
 Simple pipeline: Receive chunk → Extract nodes → Return to frontend
 """
 
-from fastapi import FastAPI, Query, Body, BackgroundTasks
+from fastapi import FastAPI, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -16,6 +16,7 @@ from pydantic import BaseModel
 import base64
 import tempfile
 import io
+import httpx
 
 from services.meetmap_service import MeetMapService
 from services.database import db
@@ -96,16 +97,20 @@ async def lifespan(app: FastAPI):
                 # Sort statements to ensure meetings table is created first
                 def get_table_priority(stmt):
                     stmt_upper = stmt.upper()
-                    if 'MEETINGS' in stmt_upper:
-                        return 0  # Highest priority
-                    elif 'USERS' in stmt_upper:
-                        return 1
-                    elif 'GRAPH_NODES' in stmt_upper or 'GRAPH_EDGES' in stmt_upper:
-                        return 2  # Depends on meetings
-                    elif 'CLUSTERS' in stmt_upper or 'CLUSTER_MEMBERS' in stmt_upper:
+                    if 'USERS' in stmt_upper:
+                        return 0  # Highest priority - no dependencies
+                    elif 'MEETINGS' in stmt_upper:
+                        return 1  # Depends on users (for foreign key in user_meetings)
+                    elif 'USER_MEETINGS' in stmt_upper:
+                        return 2  # Depends on users and meetings
+                    elif 'TRANSCRIPTIONS' in stmt_upper:
                         return 3  # Depends on meetings
+                    elif 'GRAPH_NODES' in stmt_upper or 'GRAPH_EDGES' in stmt_upper:
+                        return 4  # Depends on meetings
+                    elif 'CLUSTERS' in stmt_upper or 'CLUSTER_MEMBERS' in stmt_upper:
+                        return 5  # Depends on meetings
                     else:
-                        return 4
+                        return 6
                 
                 create_table_statements.sort(key=get_table_priority)
                 
@@ -446,8 +451,7 @@ async def test_database():
 
 class MeetingCreateRequest(BaseModel):
     """Request model for creating a meeting"""
-    title: str = "Untitled Meeting"
-    description: Optional[str] = None
+    user_id: str  # User ID (required)
 
 
 class TranscribeRequest(BaseModel):
@@ -460,18 +464,33 @@ class TranscribeRequest(BaseModel):
 
 @app.post("/api/meetings")
 async def create_meeting(request: MeetingCreateRequest):
-    """Create a new meeting"""
+    """Create a new meeting for a user"""
     try:
+        # Validate user_id
+        if not request.user_id or not request.user_id.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "user_id is required"}
+            )
+        
+        user_id = request.user_id.strip()
+        
+        # Create or get user (ensures user exists)
+        await db.create_or_get_user(user_id)
+        
         # Generate meeting ID
         import uuid
         meeting_id = f"meeting_{uuid.uuid4().hex[:12]}"
         
-        # Create meeting in database
+        # Create meeting in database (with default title)
         await db.create_meeting(
             meeting_id=meeting_id,
-            title=request.title.strip() if request.title else "Untitled Meeting",
-            description=request.description.strip() if request.description else None
+            title="Untitled Meeting",
+            description=None
         )
+        
+        # Link user to meeting
+        await db.link_user_to_meeting(user_id, meeting_id)
         
         # Get the created meeting
         meeting = await db.get_meeting(meeting_id)
@@ -496,10 +515,11 @@ async def create_meeting(request: MeetingCreateRequest):
 
 
 @app.post("/api/transcribe")
-async def transcribe_audio(request: TranscribeRequest, background_tasks: BackgroundTasks):
+async def transcribe_audio(request: TranscribeRequest):
     """
-    Transcribe audio using Whisper API and process it to extract nodes.
-    Returns only the transcription text (nodes are processed silently).
+    Transcribe audio using Whisper API.
+    Returns only the transcription text.
+    To extract nodes from the transcription, call /api/transcript separately.
     """
     try:
         # Validate inputs
@@ -577,52 +597,22 @@ async def transcribe_audio(request: TranscribeRequest, background_tasks: Backgro
                     content={"status": "error", "message": "Transcription is empty"}
                 )
             
-            # Step 4: Return transcription IMMEDIATELY (before node extraction)
-            # This allows frontend to display transcription right away
-            transcription_response = {
+            # Save transcription to database
+            # If meeting_id is new, creates new row; if exists, concatenates to existing transcription
+            try:
+                await db.save_transcription(meeting_id, transcription.strip())
+                print(f"[{time.strftime('%H:%M:%S')}] 💾 Transcription saved to database for meeting: {meeting_id}")
+            except Exception as save_error:
+                print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Warning: Failed to save transcription to database: {save_error}")
+                # Continue anyway - return transcription even if save fails
+            
+            # Return transcription
+            return {
                 "status": "success",
                 "transcription": transcription.strip(),
                 "start": start,
                 "end": end
             }
-            
-            # Step 5: Process transcription in background (fire-and-forget)
-            # This extracts nodes and saves them to database asynchronously
-            async def process_nodes_background():
-                try:
-                    chunk_dict = {
-                        "text": transcription.strip(),
-                        "start": start,
-                        "end": end,
-                        "meeting_id": meeting_id,
-                        "speaker": None,  # Whisper doesn't do speaker diarization
-                        "chunk_id": None
-                    }
-                    print(f"[{time.strftime('%H:%M:%S')}] 🔄 Processing transcription to extract nodes (background)...")
-                    print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Chunk data: text_length={len(transcription)}, meeting_id={meeting_id}")
-                    result = await process_transcript_chunk(chunk_dict)
-                    if isinstance(result, JSONResponse):
-                        error_body = result.body.decode() if isinstance(result.body, bytes) else str(result.body)
-                        print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Error processing transcription: {error_body}")
-                    else:
-                        nodes_count = len(result.get('nodes', []))
-                        edges_count = len(result.get('edges', []))
-                        print(f"[{time.strftime('%H:%M:%S')}] ✅ Nodes extracted: {nodes_count} nodes, {edges_count} edges")
-                        # Verify nodes were actually saved to database
-                        saved_nodes = await db.get_all_nodes(meeting_id)
-                        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Verified: {len(saved_nodes)} nodes in database for meeting_id={meeting_id}")
-                        if nodes_count > 0 and len(saved_nodes) == 0:
-                            print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Nodes were extracted but not saved to database!")
-                except Exception as process_error:
-                    print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Error processing transcription: {process_error}")
-                    import traceback
-                    traceback.print_exc()
-            
-            # Add background task (runs after response is sent)
-            background_tasks.add_task(process_nodes_background)
-            
-            # Return transcription immediately
-            return transcription_response
             
         finally:
             # Clean up temporary file
@@ -962,7 +952,7 @@ async def ask_meeting_assistant(request: ChatRequest):
     """
     AI meeting assistant endpoint.
     Answers questions about the meeting or general knowledge helpful for meetings.
-    Uses all node descriptions (summaries) from the user's graph as context.
+    Uses the full meeting transcription as context (from transcriptions table).
     Supports optional image input for vision-based questions.
     """
     try:
@@ -990,46 +980,28 @@ async def ask_meeting_assistant(request: ChatRequest):
                 content={"status": "error", "message": f"Meeting {meeting_id} not found"}
             )
         
-        # Get all nodes for the meeting (optional - meeting context)
-        all_nodes = await db.get_all_nodes(meeting_id)
+        # Get transcription for the meeting (meeting context)
+        transcription_record = await db.get_transcription(meeting_id)
         
-        # Extract summaries (descriptions) from nodes, skip root nodes
-        node_descriptions = []
-        if all_nodes:
-            for node in all_nodes:
-                node_id = node['id']
-                summary = node.get('summary', '')
-                
-                # Skip root nodes
-                if node_id.startswith('root') or node_id == 'root':
-                    continue
-                
-                # Skip empty summaries
-                if summary and summary.strip():
-                    node_descriptions.append(summary.strip())
+        # Extract transcription text if available
+        transcription_text = ""
+        if transcription_record and transcription_record.get('transcription'):
+            transcription_text = transcription_record['transcription'].strip()
         
-        # Build context string from node descriptions (if available)
-        context_text = ""
-        if node_descriptions:
-            context_text = "\n".join([
-                f"{i+1}. {desc}" 
-                for i, desc in enumerate(node_descriptions)
-            ])
-        
-        # Build prompt - handle both cases: with and without meeting context
-        if context_text:
+        # Build prompt - handle both cases: with and without meeting transcription
+        if transcription_text:
             prompt = f"""You are a helpful meeting assistant. The user may send you:
 - Questions about the meeting/conversation
 - Direct transcriptions from the meeting
 - General questions or requests
 
-Meeting Context (ideas discussed, in chronological order):
-{context_text}
+Meeting Transcription (full conversation):
+{transcription_text}
 
 User Input: {question}
 
 Instructions:
-- If the input is about the meeting, use the context above to help answer
+- If the input is about the meeting, use the transcription above to help answer
 - If it's a direct transcription, acknowledge it and provide relevant insights
 - If it's a general question, answer using your knowledge
 - If no meeting context is needed, answer directly
